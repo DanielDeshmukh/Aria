@@ -27,7 +27,7 @@ class Settings:
     deepgram_api_key: str = field(repr=False, default="")
     groq_api_key: str = field(repr=False, default="")
     sarvam_api_key: str = field(repr=False, default="")
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-20b"
     sarvam_voice: str = ""  # female Indian-English persona, set after T11 probe
 
     def missing_keys(self) -> list[str]:
@@ -46,7 +46,7 @@ def get_settings() -> Settings:
         deepgram_api_key=os.getenv("DEEPGRAM_API_KEY", "").strip(),
         groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
         sarvam_api_key=os.getenv("SARVAM_API_KEY", "").strip(),
-        groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip(),
+        groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip(),
         sarvam_voice=os.getenv("SARVAM_VOICE", "").strip(),
     )
 
