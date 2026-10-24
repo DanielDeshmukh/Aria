@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --color-paper: #f6f5ef;
+  --color-paper: #faf3e9;
   --color-card: #ffffff;
   --color-ink: #132019;
   --color-ink2: #56655c;
@@ -60,8 +60,11 @@ body {
 
 /* ---------- dotted blueprint grid ---------- */
 .dot-grid {
-  background-image: radial-gradient(circle, rgba(11, 122, 91, 0.16) 1px, transparent 1px);
+  background-image: radial-gradient(circle, rgba(11, 122, 91, 0.22) 1px, transparent 1px);
   background-size: 26px 26px;
+}
+.dark .dot-grid {
+  background-image: radial-gradient(circle, rgba(11, 122, 91, 0.16) 1px, transparent 1px);
 }
 
 /* ---------- motion primitives ---------- */
@@ -179,7 +182,7 @@ body {
 
 /* ---------- backmost dotted grid ---------- */
 .bg-dotgrid {
-  background-image: radial-gradient(circle, rgba(19, 32, 25, 0.14) 1px, transparent 1px);
+  background-image: radial-gradient(circle, rgba(11, 122, 91, 0.22) 1px, transparent 1px);
   background-size: 26px 26px;
 }
 .dark .bg-dotgrid {
