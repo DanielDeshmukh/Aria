@@ -3,6 +3,7 @@ import CallControls from "./CallControls";
 import LiveTranscript from "./LiveTranscript";
 import OrdersPanel from "./OrdersPanel";
 import StateBadge from "./StateBadge";
+import SummaryCard from "./SummaryCard";
 import { useVoiceSession } from "./useVoiceSession";
 
 export default function CallApp() {
@@ -48,7 +49,11 @@ export default function CallApp() {
         </div>
 
         {/* Post-call summary card (T18) */}
-        <div data-testid="summary-card" className="mt-6" />
+        {session.summary && (
+          <div className="mt-6">
+            <SummaryCard summary={session.summary} transcript={session.transcript} />
+          </div>
+        )}
 
         <div className="mt-7">
           <CallControls

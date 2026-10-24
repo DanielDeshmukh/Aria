@@ -18,10 +18,9 @@ internship assignment**. The repository ships the **Phase 1 master-plan
 website** (React + Vite + Tailwind) plus the **backend voice pipeline**: a
 FastAPI WebSocket session (`/ws/call`) wiring **Deepgram STT → Groq LLM with
 tool calling → Sarvam Bulbul v4 Flash TTS**, with order tools, call guardrails
-and a post-call summary. The in-browser call screen is live (mic capture →
-WebSocket session → live state badge → audio playback), with the test-orders
-helper and live transcript panels shipped; the post-call summary panel is
-landing next.
+and a post-call summary. The in-browser call screen is complete: mic capture →
+WebSocket session → live state badge → audio playback, with the test-orders
+helper, live transcript and post-call summary panels all shipped.
 
 > **Testing policy:** no code or command block reaches this repository before
 > it has been executed. Every snippet below was run on Windows 11
@@ -60,7 +59,7 @@ spec, test script and 4-day schedule live in
 | **1** | Interactive master-plan site + FastAPI scaffold + Docker/HF deployment layout | shipped |
 | **2** | Voice session: WebSocket, streaming STT → LLM → TTS with tool calling | backend shipped (`/ws/call`) |
 | **3** | Tools, guardrails, call summary | backend shipped · owner dashboard pending |
-| — | In-browser call screen: mic capture, WS session, state badge, playback | shipped · summary panel in progress |
+| — | In-browser call screen: mic capture, WS session, state badge, playback, transcript, orders helper, summary | shipped |
 | **4** | Hugging Face Space launch, demo assets, final submission | pending |
 
 ## 2. Architecture
@@ -139,7 +138,7 @@ Aria/
 ├── frontend/                # React planning site (Vite + Tailwind)
 │   ├── src/
 │   │   ├── call/            #   CallApp, useVoiceSession, useMic, playback,
-│   │   │                    #   OrdersPanel, LiveTranscript
+│   │   │                    #   OrdersPanel, LiveTranscript, SummaryCard
 │   │   ├── components/      #   Nav, Hero, Lens, Requirements, …
 │   │   ├── routes.ts        #   clean-route scroll routing
 │   │   └── index.css        #   @theme tokens, light/dark palettes
