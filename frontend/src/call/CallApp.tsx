@@ -1,5 +1,6 @@
 import { Chip } from "../components/ui";
 import CallControls from "./CallControls";
+import LiveTranscript from "./LiveTranscript";
 import OrdersPanel from "./OrdersPanel";
 import StateBadge from "./StateBadge";
 import { useVoiceSession } from "./useVoiceSession";
@@ -40,12 +41,9 @@ export default function CallApp() {
           </div>
         )}
 
-        {/* reserved transcript region — LiveTranscript (T17) */}
+        {/* live transcript + orders helper */}
         <div className="grid gap-6 md:grid-cols-[1fr_330px]">
-          <div
-            aria-label="live transcript"
-            className="min-h-[320px] rounded-2xl border border-line bg-card/60"
-          />
+          <LiveTranscript transcript={session.transcript} tools={session.tools} />
           <OrdersPanel />
         </div>
 

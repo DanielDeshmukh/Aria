@@ -23,6 +23,8 @@ export interface ToolEvent {
   name: string;
   args: Record<string, unknown>;
   result: unknown;
+  /** transcript length when the tool fired — keeps the live log in order */
+  at: number;
 }
 
 export interface CallStats {
@@ -52,7 +54,7 @@ const INITIAL: SessionData = {
 type Action =
   | { type: "state"; state: CallState }
   | { type: "transcript"; role: TranscriptRole; text: string; final: boolean }
-  | { type: "tool"; event: ToolEvent }
+  | { type: "tool"; event: Omit<ToolEvent, "at"> }
   | { type: "stats"; stats: CallStats }
   | { type: "summary"; summary: CallSummary }
   | { type: "error"; error: string }
@@ -90,7 +92,10 @@ function reducer(state: SessionData, action: Action): SessionData {
       return { ...state, transcript: list };
     }
     case "tool":
-      return { ...state, tools: [...state.tools, action.event] };
+      return {
+        ...state,
+        tools: [...state.tools, { ...action.event, at: state.transcript.length }],
+      };
     case "stats":
       return { ...state, stats: action.stats };
     case "summary":
@@ -164,12 +169,9 @@ export function useVoiceSession() {
         case "transcript": {
           const role = msg.role;
           if (role !== "customer" && role !== "agent") break;
-          dispatch({
-            type: "transcript",
-            role,
-            text: typeof msg.text === "string" ? msg.text : "",
-            final: msg.final === true,
-          });
+          const text = typeof msg.text === "string" ? msg.text : "";
+          if (!text.trim()) break; // blank interim/final — no empty rows
+          dispatch({ type: "transcript", role, text, final: msg.final === true });
           break;
         }
         case "audio":
