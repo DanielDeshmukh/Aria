@@ -38,7 +38,14 @@ export default function CallApp() {
             role="alert"
             className="mb-6 rounded-2xl border border-pop/40 bg-popsoft px-4 py-3.5 text-[13.5px] font-medium text-pop"
           >
-            {error}
+            <p>{error}</p>
+            {/microphone/i.test(error) && (
+              <p className="mt-1.5 text-[12.5px] font-normal leading-relaxed text-pop/85">
+                Retry re-prompts for the microphone. If the browser keeps blocking
+                it, allow microphone access for this site in your browser
+                settings, then retry.
+              </p>
+            )}
           </div>
         )}
 

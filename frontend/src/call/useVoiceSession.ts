@@ -137,6 +137,9 @@ export function useVoiceSession() {
   const start = useCallback(async () => {
     dispatch({ type: "reset" });
     teardownSocket();
+    // show connecting immediately: badge truth + onclose treats unclean
+    // drops during handshake as connection-lost instead of silent idle
+    dispatch({ type: "state", state: "connecting" });
     try {
       await mic.start(sendAudio);
     } catch (err) {

@@ -379,6 +379,8 @@ macOS/Linux equivalent: `curl http://localhost:7860/api/health`.
 | pip `ResolutionImpossible` during Docker build | old pip 24 resolver + registry timeouts | image already runs `pip install --upgrade pip` first — rebuild |
 | Theme flashes light on reload | JS disabled or localStorage cleared | bootstrap script in `index.html` defaults correctly; report a bug if seen |
 | Aria interrupts herself mid-reply | speaker output re-enters the mic | use headphones (recommended); barge-in is server-driven, the client mic stays open |
+| Start Call shows "Microphone access was denied" | the browser blocked the mic | press Retry to re-prompt, or allow microphone access for this site in the browser's site settings |
+| "Connection lost — please retry." | WebSocket dropped (server restart, proxy timeout, network) | press Retry — sessions are one-shot, so it opens a fresh connection and session |
 
 ## 14. Assignment documents
 
