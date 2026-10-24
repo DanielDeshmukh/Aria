@@ -308,6 +308,18 @@ git commit -m "feat: serve built frontend with SPA deep-link fallback"
 
 ### Task 5: README + `.env.example`
 
+> **Amended during execution (same session):** Task 5 expanded to —
+> **(a)** add `.github/workflows/ci.yml` (npm ci → `tsc --noEmit` → build → `pytest -v`, Python 3.13 + Node 22) so a CI-passing badge exists and nothing lands untested;
+> **(b)** README must be comprehensively documented with badges, and *every*
+> code block must be executed before commit (Windows PowerShell verified
+> locally; POSIX flow verified in a `python:3.11-slim` container; Docker
+> blocks verified in Task 6; `git remote add hf` syntax verified —
+> `git push hf main` remains deploy-time);
+> **(c)** publish the preserved history to a **new GitHub repo `Aria`**
+> (`DanielDeshmukh/Aria`, branch `main`) and confirm the CI badge goes green.
+> Task 6 deviation already applied: image runs `pip install --upgrade pip`
+> first (real build failed with pip-24 `ResolutionImpossible`).
+
 **Files:** Create `README.md`, `.env.example` at root
 
 **Interfaces:** Consumes: routes from Tasks 3-4, Docker file from Task 6. Produces: HF Space front matter; the key-name contract (`DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `SARVAM_API_KEY`).
