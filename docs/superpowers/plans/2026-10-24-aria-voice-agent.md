@@ -549,6 +549,21 @@ useVoiceSession(): { state, transcript, tools, stats, summary, error, start(), e
 
 ---
 
+#### Task 21.5 — Landing page trim (user-directed, post-T21)
+
+**Directive (user, verbatim intent):** keep only the hero; put the call UI on the landing page below the hero; keep the design-principles section *layout* but change its content to pipeline steps; keep the footer unchanged; remove the rest. Start Call scrolls down to the embedded call; `/call` stays as a direct-link route.
+**Supersedes:** global constraint 4 ("plan.ts frozen; only Hero CTA + App route switch touch the product site") — `plan.ts` stays frozen except the one factual TICKER fix below; the product site itself is restructured per this directive.
+**Steps:**
+1. [x] Delete 9 section components — `Evaluating, Requirements, Policies, Architecture, ToolsBehavior, TestScript, Schedule, Submission, Appendix` (only `App.tsx` imported them). Remaining: `Footer, Hero, Nav, Pipeline, ui`.
+2. [x] Extract `call/CallPanel.tsx` (status row: first-audio chip + StateBadge; error banner; transcript + OrdersPanel grid; summary; controls). Rendered by the landing embed (`<Section id="call">`, SectionHead no="01" kicker "live — talk to Aria") **and** the `/call` route shell (`CallApp.tsx` — back-link header kept, same panel).
+3. [x] New `components/Pipeline.tsx` — Evaluating's exact layout (SectionHead no="02", 2×2 hover cards, closing quote) with 4 stages: **01 Capture** (AudioWorklet → 16 kHz PCM16, 100 ms frames) · **02 Listen** (Deepgram nova-3 `language=multi`, endpointing 300 ms, interim barge-in) · **03 Reason** (Groq `gpt-oss-20b` + tools; verdicts computed in `policy.py`) · **04 Speak** (Sarvam Bulbul sentence streaming, ~1.9 s p50). Copy in `site.ts` (`PIPELINE`, `PIPELINE_QUOTE`).
+4. [x] Hero: Start Call CTA + scroll cue → `#call` anchors (smooth scroll). `routes.ts` interceptor is now hash-aware (`scrollToPath(instant, hash)`, push includes the hash, popstate honours `location.hash`, legacy `/#call` preserved on load).
+5. [x] `site.ts` pruned to `NAV` (`[{id:"pipeline",label:"How it works"}]` — nav + `ROUTE_PATHS` follow automatically), `HERO_STATS`, `PIPELINE`, `PIPELINE_QUOTE`; all dead `PLAN_*` mappings removed. `plan.ts` touched once: TICKER "Groq · Llama 3.3 70B" → "Groq · gpt-oss-20b" (runtime default in `config.py`; the old text was factually stale — no `GROQ_MODEL` override in `.env`).
+6. [x] Docs synced: README (intro, phase table, architecture bullets, repo tree, `/lens`→`/pipeline` examples, §9 routing rewrite, evaluator headphones note, live-demo wording) + `main.py` SPA docstring + `routes.ts` comments.
+7. [x] Validation: `tsc --noEmit` ✓, `vite build` ✓ (529 → 445 kB), `pytest` ✓, screenshots of `/` and `/call` with 0 console errors → commit `feat(frontend): lean landing — hero + embedded live call + pipeline section (drop plan-doc sections)` → push, CI green.
+
+---
+
 #### Task 22 — Docker build + Hugging Face Spaces deploy
 
 **Files:** none changed (Dockerfile verified); `backend/scripts/ws_smoke.py` added.
@@ -557,7 +572,7 @@ useVoiceSession(): { state, transcript, tools, stats, summary, error, start(), e
 2. [ ] Local build (if Docker available): `docker build -t aria .` → `docker run -p 7860:7860 -e DEEPGRAM_API_KEY=... -e GROQ_API_KEY=... -e SARVAM_API_KEY=... aria` → `curl localhost:7860/api/health` → ok. If Docker unavailable locally, note it and rely on HF build logs.
 3. [ ] HF Space (user actions, exact steps): hf.co → New Space → owner `Daniel2503`, name `aria-voice-agent`, SDK **Docker**, CPU basic → `git remote add hf https://huggingface.co/spaces/Daniel2503/aria-voice-agent` → Settings ▸ Secrets: `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `SARVAM_API_KEY` → push `main` → watch Space build logs until running → **front matter:** README gains `---\ntitle: Aria Voice Agent\nsdk: docker\napp_port: 7860\n---` (Task 23 owns the full README — push happens after T23; order swap: do T23 first, then deploy here. **Reordered execution: T23 → T22.**)
 4. [ ] `scripts/ws_smoke.py`: `websockets.connect("wss://<space>.hf.space/ws/call")` → `start` → assert greeting `audio` + `state` events within 15 s → `end` → assert `summary`. Run against deployed URL.
-5. [ ] Verify `/call` loads on the live URL (Playwright against https, fake mic), `/lens` deep link still works, hero CTA visible. Commit script: `feat(backend): remote WS smoke test`
+5. [ ] Verify `/call` loads on the live URL (Playwright against https, fake mic), `/pipeline` deep link still works, hero CTA visible. Commit script: `feat(backend): remote WS smoke test`
 **Verification:** live URL: health ok, ws smoke passes, `/call` loads.
 
 ---

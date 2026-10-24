@@ -1,27 +1,26 @@
 import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
-import { LENS_QUOTE } from "../data/plan";
-import { LENS } from "../data/site";
+import { PIPELINE, PIPELINE_QUOTE } from "../data/site";
 import { Reveal, Section, SectionHead } from "./ui";
 
-export default function Evaluating() {
+export default function Pipeline() {
   return (
-    <Section id="lens" className="py-24 md:py-32">
+    <Section id="pipeline" className="py-24 md:py-32">
       <SectionHead
-        no="01"
-        kicker="design principles"
+        no="02"
+        kicker="how it works"
         title={
           <>
-            What this product
+            Four stages,
             <br />
-            <span className="italic text-pine">lives</span> or dies on
+            <span className="italic text-pine">one</span> conversation
           </>
         }
-        desc="Four things. Not features, not polish for its own sake. Every decision in this build serves one of them — each only needs to prove itself once, cleanly, in a real conversation."
+        desc="Mic to speaker over a single WebSocket. Every stage is a separate service with one job it can explain — no black boxes between the customer's words and Aria's answer."
       />
 
       <div className="grid gap-4 sm:grid-cols-2">
-        {LENS.map((c, i) => (
+        {PIPELINE.map((c, i) => (
           <Reveal key={c.n} delay={i * 0.08}>
             <motion.div
               whileHover={{ y: -6 }}
@@ -33,7 +32,7 @@ export default function Evaluating() {
               </span>
               <div className="relative">
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-[11px] tracking-[0.22em] text-pine">SIGNAL {c.n}</span>
+                  <span className="font-mono text-[11px] tracking-[0.22em] text-pine">STAGE {c.n}</span>
                   <ArrowUpRight
                     size={16}
                     className="text-ink2 opacity-0 transition-all duration-300 group-hover:translate-x-0.5 group-hover:text-pine group-hover:opacity-100"
@@ -47,15 +46,15 @@ export default function Evaluating() {
         ))}
       </div>
 
-      {/* the one rule */}
+      {/* the closing line */}
       <Reveal delay={0.1} className="mt-16 md:mt-20">
         <figure className="relative border-y border-line py-12 text-center md:py-16">
           <span className="absolute -top-7 left-1/2 -translate-x-1/2 bg-paper px-4 font-display text-6xl italic text-pine">“</span>
           <blockquote className="mx-auto max-w-4xl text-balance font-display text-2xl font-light italic leading-snug tracking-tight text-ink md:text-[2.6rem] md:leading-[1.2]">
-            {LENS_QUOTE}
+            {PIPELINE_QUOTE}
           </blockquote>
           <figcaption className="mt-6 font-mono text-[11px] uppercase tracking-[0.3em] text-ink2">
-            — how we scope features
+            — speech in, policy-true voice out
           </figcaption>
         </figure>
       </Reveal>

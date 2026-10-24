@@ -82,7 +82,7 @@ export default function Hero() {
 
           {/* Start Call CTA */}
           <motion.a
-            href="/call"
+            href="#call"
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 1.15, duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
@@ -94,13 +94,13 @@ export default function Hero() {
 
           {/* scroll cue */}
           <motion.a
-            href="/lens"
+            href="#call"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 1.4 }}
             className="absolute bottom-7 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-ink2 transition-colors hover:text-pine"
           >
-            <span className="font-mono text-[10px] uppercase tracking-[0.3em]">the product</span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.3em]">the live call</span>
             <motion.span animate={{ y: [0, 6, 0] }} transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}>
               <ArrowDown size={15} />
             </motion.span>

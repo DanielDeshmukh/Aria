@@ -41,7 +41,8 @@ async def ws_call(websocket: WebSocket) -> None:
 @app.get("/{full_path:path}", include_in_schema=False)
 async def spa(full_path: str) -> FileResponse:
     """Serve built frontend files; unknown paths fall back to index.html
-    so client-side clean routes (/lens, /requirements …) deep-link correctly."""
+    so client-side clean routes (/pipeline …) and hash targets (/#call)
+    deep-link correctly."""
     if full_path:
         root = DIST.resolve()
         candidate = (DIST / full_path).resolve()

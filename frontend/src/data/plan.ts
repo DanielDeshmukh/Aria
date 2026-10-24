@@ -1,4 +1,4 @@
-/* ------------------------------------------------------------------ */
+﻿/* ------------------------------------------------------------------ */
 /*  Aria — Voice Agent Master Plan · all content, typed and complete  */
 /* ------------------------------------------------------------------ */
 
@@ -24,7 +24,7 @@ export const HERO_STATS = [
 
 export const TICKER = [
   "Deepgram STT",
-  "Groq · Llama 3.3 70B",
+  "Groq · gpt-oss-20b",
   "Sarvam Bulbul v4 Flash",
   "FastAPI WebSockets",
   "HF Spaces · Docker SDK",
@@ -276,7 +276,7 @@ export const STACK = [
     choice: "Deepgram streaming (default)",
     why: "Low latency, endpointing built in. Test Sarvam STT as a swap on Day 2 if Hinglish or accent accuracy is weak.",
   },
-  { layer: "LLM", choice: "Groq — Llama 3.3 70B · Gemini Flash fallback", why: "Fast first token, tool calling." },
+  { layer: "LLM", choice: "Groq — gpt-oss-20b · Gemini Flash fallback", why: "Fast first token, tool calling." },
   { layer: "TTS", choice: "Sarvam Bulbul v4 Flash (bulbul:v4-flash)", why: "Indian voices, Hinglish, sub-250ms time-to-first-audio." },
   { layer: "Hosting", choice: "One Docker container — API + built frontend", why: "One URL, one origin, no CORS, wss just works." },
   {

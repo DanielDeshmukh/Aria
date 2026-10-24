@@ -14,16 +14,17 @@ app_port: 7860
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-38B2AC?logo=tailwindcss&logoColor=white)
 
 Browser-based AI voice customer-support agent for the **Datastraw AI + Tech
-internship assignment**. The repository ships the **Phase 1 master-plan
-website** (React + Vite + Tailwind) plus the **backend voice pipeline**: a
+internship assignment**. The repository ships a **lean landing page**
+(hero, embedded live call, pipeline overview — React + Vite + Tailwind)
+plus the **backend voice pipeline**: a
 FastAPI WebSocket session (`/ws/call`) wiring **Deepgram STT → Groq LLM with
 tool calling → Sarvam Bulbul v4 Flash TTS**, with order tools, call guardrails
 and a post-call summary. The in-browser call screen is complete: mic capture →
 WebSocket session → live state badge → audio playback, with the test-orders
 helper, live transcript and post-call summary panels all shipped.
 
-**Live demo:** `<live-link>` (Hugging Face Space) — open `/call`, allow the
-microphone, and speak.
+**Live demo:** `<live-link>` (Hugging Face Space) — allow the microphone,
+press Start Call, and speak.
 
 <!-- demo -->
 
@@ -65,7 +66,7 @@ spec, test script and 4-day schedule live in
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| **1** | Interactive master-plan site + FastAPI scaffold + Docker/HF deployment layout | shipped |
+| **1** | Landing site (hero + embedded live call + pipeline), FastAPI scaffold, Docker/HF layout | shipped |
 | **2** | Voice session: WebSocket, streaming STT → LLM → TTS with tool calling | backend shipped (`/ws/call`) |
 | **3** | Tools, guardrails, call summary, barge-in, full call screen | shipped |
 | — | In-browser call screen: mic capture, WS session, state badge, playback, transcript, orders helper, summary | shipped |
@@ -91,18 +92,19 @@ spec, test script and 4-day schedule live in
 ```
 
 * **Static site:** FastAPI serves the single-file production build of the
-  planning site. Clean routes such as `/lens` or `/requirements` deep-link
-  because unknown paths fall back to `index.html` and the client router
-  scrolls to the matching section (see [§9](#9-client-side-routing-notes)).
+  landing page. The clean route `/pipeline` deep-links to the pipeline
+  section because unknown paths fall back to `index.html` and the client
+  router scrolls to the matching section (see [§9](#9-client-side-routing-notes)).
 * **Voice session:** the same process upgrades a request to a WebSocket for
   duplex audio; all provider API keys stay **server-side** (see
   [§10](#10-environment-variables)). The session state machine, provider
   clients, order tools and summary builder live in `backend/` and are covered
   by the hermetic test suite (see [§7](#7-testing--ci)).
-* **Call screen:** the hero's Start Call CTA opens `/call`, an in-browser test
-  call: AudioWorklet mic capture → 16 kHz PCM16 frames → the same WebSocket,
-  with live state badge, first-audio chip and gapless audio playback
-  (`frontend/src/call/`).
+* **Call screen:** the hero's Start Call CTA scrolls to the full call
+  screen embedded below the hero — AudioWorklet mic capture → 16 kHz PCM16
+  frames → the same WebSocket, with live state badge, first-audio chip and
+  gapless audio playback (`frontend/src/call/`). The standalone `/call`
+  route renders the same panel for direct links (README, smoke tests).
 
 ## 3. Tech stack
 
@@ -147,9 +149,10 @@ Aria/
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React planning site (Vite + Tailwind)
 │   ├── src/
-│   │   ├── call/            #   CallApp, useVoiceSession, useMic, playback,
-│   │   │                    #   OrdersPanel, LiveTranscript, SummaryCard
-│   │   ├── components/      #   Nav, Hero, Lens, Requirements, …
+│   │   ├── call/            #   CallPanel (shared surface), CallApp (/call
+│   │   │                    #   route shell), useVoiceSession, useMic,
+│   │   │                    #   playback, OrdersPanel, LiveTranscript, SummaryCard
+│   │   ├── components/      #   Nav, Hero, Pipeline, Footer, ui
 │   │   ├── routes.ts        #   clean-route scroll routing
 │   │   └── index.css        #   @theme tokens, light/dark palettes
 │   ├── index.html           #   no-flash theme bootstrap script
@@ -212,7 +215,7 @@ Smoke-check either server:
 
 ```bash
 curl http://localhost:8000/api/health   # {"status":"ok","service":"aria"}
-curl -I http://localhost:8000/lens      # HTTP/1.1 200 OK (SPA fallback)
+curl -I http://localhost:8000/pipeline   # HTTP/1.1 200 OK (SPA fallback)
 ```
 
 ### 6.4 Run it as a container
@@ -311,18 +314,21 @@ connection). When the client goes quiet, the server feeds Deepgram its own
 * `frontend/src/routes.ts` owns navigation: clicks are intercepted and pushed
   via `history.pushState`, then the target section is scrolled smoothly with
   `scroll-margin-top: 86px` so section headings clear the sticky nav.
-* Deep links (`/lens`, `/requirements`, …) are re-applied on load — after
-  fonts and layout settle — unless the user has already scrolled (their
-  scroll wins).
-* Legacy `/#section` URLs are converted to clean `/section` paths in place.
+* The page has two targets: `#call` (the embedded live call) and
+  `/pipeline` (how it works). The hero's Start Call CTA and scroll cue
+  smooth-scroll to `#call`; the interceptor is hash-aware, so `#call` works
+  from anywhere, including while sitting on `/pipeline`.
+* Deep links (`/pipeline`, `/#call`) are re-applied on load — after fonts and
+  layout settle — unless the user has already scrolled (their scroll wins).
 * Because FastAPI unknown-paths fall back to `index.html`, these URLs work on
   a cold reload and in production, not just in the Vite dev server.
-* `/call` is **not** part of that scroll router: it is a full-page app. The
-  click interceptor ignores paths outside the section list, so the hero's
-  `href="/call"` navigates natively, and on `/call` the plain `href="/"`
-  back link returns to the site (the hook is not mounted there).
-* Headphones are recommended on `/call`: barge-in is server-driven only (the
-  mic is never muted client-side), so loud speaker output can re-trigger it.
+* The standalone `/call` route remains for direct links (README, smoke
+  tests): it is not in the scroll router's section list, so a native
+  navigation loads the full-page app, whose plain `href="/"` back link
+  returns to the site (the hook is not mounted there).
+* Headphones are recommended for the call (embedded or `/call`): barge-in is
+  server-driven only (the mic is never muted client-side), so loud speaker
+  output can re-trigger it.
 
 ## 10. Environment variables
 
@@ -354,7 +360,7 @@ docker build -t aria-voice-agent .
 docker run -d --name aria-smoke -p 7860:7860 aria-voice-agent
 
 Invoke-RestMethod http://localhost:7860/api/health   # {"status":"ok",…}
-(Invoke-WebRequest http://localhost:7860/lens).StatusCode   # 200
+(Invoke-WebRequest http://localhost:7860/pipeline).StatusCode   # 200
 
 docker stop aria-smoke; docker rm aria-smoke
 ```
@@ -456,8 +462,9 @@ The same script runs against the deployed URL as the final pre-submit check.
 
 ## 17. Notes for evaluators
 
-* **Use headphones** on `/call` — the mic is never muted client-side, so
-  speaker output can self-trigger barge-in.
+* **Use headphones** on the call (embedded on `/`, or standalone `/call`) —
+  the mic is never muted client-side, so speaker output can self-trigger
+  barge-in.
 * **Mic permission:** the browser prompts on Start Call; allow it (Retry
   re-prompts if it was blocked).
 * **Sample orders** are printed on the call screen — speak an id like
