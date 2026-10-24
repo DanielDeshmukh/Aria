@@ -74,14 +74,14 @@ export function useMic(): MicApi {
       } catch (err) {
         stop();
         const name = err instanceof DOMException ? err.name : "";
-        setError(
+        const message =
           name === "NotAllowedError" || name === "SecurityError"
             ? DENIED_MESSAGE
             : name === "NotFoundError"
               ? NO_MIC_MESSAGE
-              : UNAVAILABLE_MESSAGE,
-        );
-        throw err;
+              : UNAVAILABLE_MESSAGE;
+        setError(message);
+        throw new Error(message);
       }
     },
     [stop],

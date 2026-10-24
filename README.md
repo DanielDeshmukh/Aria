@@ -18,7 +18,9 @@ internship assignment**. The repository ships the **Phase 1 master-plan
 website** (React + Vite + Tailwind) plus the **backend voice pipeline**: a
 FastAPI WebSocket session (`/ws/call`) wiring **Deepgram STT → Groq LLM with
 tool calling → Sarvam Bulbul v4 Flash TTS**, with order tools, call guardrails
-and a post-call summary. The in-browser call screen is landing next.
+and a post-call summary. The in-browser call screen is live (mic capture →
+WebSocket session → live state badge → audio playback); the transcript,
+orders and summary panels are landing next.
 
 > **Testing policy:** no code or command block reaches this repository before
 > it has been executed. Every snippet below was run on Windows 11
@@ -57,7 +59,7 @@ spec, test script and 4-day schedule live in
 | **1** | Interactive master-plan site + FastAPI scaffold + Docker/HF deployment layout | shipped |
 | **2** | Voice session: WebSocket, streaming STT → LLM → TTS with tool calling | backend shipped (`/ws/call`) |
 | **3** | Tools, guardrails, call summary | backend shipped · owner dashboard pending |
-| — | In-browser call screen (mic capture, transcripts, testing UI) | in progress |
+| — | In-browser call screen: mic capture, WS session, state badge, playback | shipped · transcript/orders/summary panels in progress |
 | **4** | Hugging Face Space launch, demo assets, final submission | pending |
 
 ## 2. Architecture
@@ -87,6 +89,10 @@ spec, test script and 4-day schedule live in
   [§10](#10-environment-variables)). The session state machine, provider
   clients, order tools and summary builder live in `backend/` and are covered
   by the hermetic test suite (see [§7](#7-testing--ci)).
+* **Call screen:** the hero's Start Call CTA opens `/call`, an in-browser test
+  call: AudioWorklet mic capture → 16 kHz PCM16 frames → the same WebSocket,
+  with live state badge, first-audio chip and gapless audio playback
+  (`frontend/src/call/`).
 
 ## 3. Tech stack
 
@@ -131,7 +137,7 @@ Aria/
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React planning site (Vite + Tailwind)
 │   ├── src/
-│   │   ├── call/            #   useMic.ts (AudioWorklet mic capture)
+│   │   ├── call/            #   CallApp, useVoiceSession, useMic, playback
 │   │   ├── components/      #   Nav, Hero, Lens, Requirements, …
 │   │   ├── routes.ts        #   clean-route scroll routing
 │   │   └── index.css        #   @theme tokens, light/dark palettes
@@ -297,6 +303,10 @@ repeat line, and the session is one-shot (one call per connection).
 * Legacy `/#section` URLs are converted to clean `/section` paths in place.
 * Because FastAPI unknown-paths fall back to `index.html`, these URLs work on
   a cold reload and in production, not just in the Vite dev server.
+* `/call` is **not** part of that scroll router: it is a full-page app. The
+  click interceptor ignores paths outside the section list, so the hero's
+  `href="/call"` navigates natively, and on `/call` the plain `href="/"`
+  back link returns to the site (the hook is not mounted there).
 
 ## 10. Environment variables
 

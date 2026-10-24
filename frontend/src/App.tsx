@@ -1,5 +1,6 @@
 import Appendix from "./components/Appendix";
 import Architecture from "./components/Architecture";
+import CallApp from "./call/CallApp";
 import Evaluating from "./components/Evaluating";
 import Footer from "./components/Footer";
 import Hero from "./components/Hero";
@@ -13,6 +14,7 @@ import ToolsBehavior from "./components/ToolsBehavior";
 import { useRouteScroll } from "./routes";
 
 export default function App() {
+  if (window.location.pathname === "/call") return <CallApp />;
   useRouteScroll();
   return (
     <div className="relative isolate min-h-screen bg-paper font-sans text-ink">

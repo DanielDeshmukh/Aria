@@ -1,5 +1,5 @@
 import { motion, useScroll, useTransform } from "framer-motion";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, PhoneCall } from "lucide-react";
 import { useRef } from "react";
 import { TICKER } from "../data/plan";
 import { HERO_STATS } from "../data/site";
@@ -79,6 +79,18 @@ export default function Hero() {
           >
             <Waveform bars={56} />
           </motion.div>
+
+          {/* Start Call CTA */}
+          <motion.a
+            href="/call"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 1.15, duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+            className="mt-9 inline-flex items-center gap-2.5 rounded-full bg-ink px-7 py-3.5 text-sm font-semibold text-paper transition-colors duration-300 hover:bg-pine"
+          >
+            <PhoneCall size={15} />
+            Start Call
+          </motion.a>
 
           {/* scroll cue */}
           <motion.a
