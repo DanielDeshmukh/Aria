@@ -240,7 +240,7 @@ Test suite layout:
 | `test_splitter` | sentence boundaries: abbreviations, prices, partial tails |
 | `test_ws_session` / `test_ws_route` / `test_ws_edges` | state machine: greeting, turns, barge-in, silence, canned lines, provider failures |
 | `test_audio_utils` / `test_stt_parse` | resample/base64, Deepgram frame parsing |
-| `test_llm_live` / `test_stt_live` / `test_tts_live` | real Groq/Deepgram/Sarvam smoke tests — **skip automatically when `.env` keys are absent (CI has none)** |
+| `test_llm_live` / `test_stt_live` / `test_tts_live` / `test_live_voice` | real Groq/Deepgram/Sarvam smoke tests — **live voice E2E: TTS audio → STT → tool turn → summary** — all skip automatically when `.env` keys are absent (CI has none) |
 
 ## 8. HTTP & WebSocket API
 
