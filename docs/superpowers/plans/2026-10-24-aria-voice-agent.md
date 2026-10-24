@@ -32,7 +32,7 @@ Browser (React SPA, single origin)
 
 **Global constraints.**
 1. Policies, brand overview, mock orders, JSON summary shape: **verbatim** from the PDF. Never paraphrase stored data.
-2. API keys server-side only. Frontend bundle must contain zero secrets. Live-API tests `pytest.mark.skipif` without keys so CI stays green.
+2. API keys server-side only. **All key access goes through `backend/config.py` (`get_settings()`); key fields are `repr=False`, never printed/logged, and errors report key NAMES only (`missing_keys()`).** Frontend bundle must contain zero secrets. Live-API tests `pytest.mark.skipif` without keys so CI stays green.
 3. State machine names exact: `idle → connecting → listening → thinking → speaking → listening … → ended` (`idle` = client-side before Start).
 4. `frontend/src/data/plan.ts` stays **frozen** (byte-for-byte). The product site at `/` changes only by: hero "Start Call" CTA + `App.tsx` route switch to the call screen. No other site edits.
 5. Providers fixed: Deepgram / Groq / Sarvam only. No telephony. Optional features (§8) only after A–E pass.
