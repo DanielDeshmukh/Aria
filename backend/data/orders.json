@@ -1,0 +1,5 @@
+[
+  {"id": "ORD-101", "customer": "Priya Sharma", "product": "Vitamin C Serum (30ml)", "value": "₹699", "status": "Out for Delivery", "carrier": "BlueDart", "tracking": "BD-982103", "delivered_days_ago": null, "ordered_hours_ago": null, "notes": "Expected by 6 PM today"},
+  {"id": "ORD-102", "customer": "Rahul Verma", "product": "Hydrating Sunscreen SPF 50", "value": "₹499", "status": "Delivered", "carrier": "Delhivery", "tracking": "DL-441029", "delivered_days_ago": 14, "ordered_hours_ago": null, "notes": "Delivered 14 days ago"},
+  {"id": "ORD-103", "customer": "Ananya Patel", "product": "Green Tea Face Wash + Toner", "value": "₹850", "status": "Processing", "carrier": null, "tracking": null, "delivered_days_ago": null, "ordered_hours_ago": 3, "notes": "Ordered 3 hours ago. Eligible for cancellation"}
+]
