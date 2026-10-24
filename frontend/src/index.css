@@ -144,6 +144,7 @@ body {
 
 /* ---------- theme — dark overrides ---------- */
 .dark {
+  color-scheme: dark;
   --color-paper: #0a1413;
   --color-card: #111815;
   --color-ink: #e9efe9;
@@ -159,20 +160,21 @@ body {
   --color-warmsoft: #2b1d0c;
 }
 
-/* ---------- smooth theme swap ---------- */
-html,
-body {
-  transition: background-color 0.25s ease, color 0.25s ease;
+/* ---------- theme swap: View Transitions ----------
+   No per-element tweening: the browser snapshots the page, flips the theme
+   instantly, then animates between the two snapshots — so gradients,
+   backdrop-blurs, shadows and the dot grid all change together. ThemeToggle
+   drives a circular reveal on ::view-transition-new(root); without View
+   Transitions support it adds .theme-fading for a short crossfade instead. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
 }
-body * {
-  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
-}
-@media (prefers-reduced-motion: reduce) {
-  html,
-  body,
-  body * {
-    transition: none;
-  }
+
+.theme-fading,
+.theme-fading * {
+  transition: background-color 0.4s ease, border-color 0.4s ease, color 0.4s ease !important;
 }
 
 /* ---------- backmost dotted grid ---------- */

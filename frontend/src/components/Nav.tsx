@@ -1,6 +1,7 @@
 import { motion, useScroll, useSpring } from "framer-motion";
 import { Moon, PhoneCall, Sun } from "lucide-react";
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { NAV } from "../data/plan";
 
 function ThemeToggle() {
@@ -8,13 +9,58 @@ function ThemeToggle() {
     document.documentElement.classList.contains("dark")
   );
 
-  const toggle = () => {
+  const toggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     const next = !dark;
-    setDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem("aria-theme", next ? "dark" : "light");
-    } catch {}
+
+    const apply = () => {
+      // flushSync so React commits before the "after" snapshot is taken
+      flushSync(() => setDark(next));
+      document.documentElement.classList.toggle("dark", next);
+      try {
+        localStorage.setItem("aria-theme", next ? "dark" : "light");
+      } catch {}
+    };
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (!document.startViewTransition || reduceMotion) {
+      // no View Transitions: brief class-scoped crossfade (snap if reduced motion)
+      const fade = !document.startViewTransition && !reduceMotion;
+      if (fade) document.documentElement.classList.add("theme-fading");
+      apply();
+      if (fade) {
+        window.setTimeout(() => {
+          document.documentElement.classList.remove("theme-fading");
+        }, 450);
+      }
+      return;
+    }
+
+    // circular reveal expanding from the button
+    const { left, top, width, height } = e.currentTarget.getBoundingClientRect();
+    const x = left + width / 2;
+    const y = top + height / 2;
+    const radius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+
+    const transition = document.startViewTransition(apply);
+    transition.ready.then(() => {
+      document.documentElement.animate(
+        {
+          clipPath: [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${radius}px at ${x}px ${y}px)`,
+          ],
+        },
+        {
+          duration: 700,
+          easing: "cubic-bezier(0.5, 1, 0.89, 1)",
+          pseudoElement: "::view-transition-new(root)",
+        }
+      );
+    });
   };
 
   return (
@@ -27,8 +73,8 @@ function ThemeToggle() {
     >
       <motion.span
         key={dark ? "sun" : "moon"}
-        initial={{ rotate: -100, opacity: 0, scale: 0.5 }}
-        animate={{ rotate: 0, opacity: 1, scale: 1 }}
+        initial={{ rotate: -100, scale: 0.5 }}
+        animate={{ rotate: 0, scale: 1 }}
         transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
         className="flex"
       >
