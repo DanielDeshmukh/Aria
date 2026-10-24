@@ -119,7 +119,11 @@ class DeepgramSTT:
     async def close(self) -> None:
         reader, self._reader = self._reader, None
         ws, self._ws = self._ws, None
-        if reader is not None and not reader.done():
+        if (
+            reader is not None
+            and reader is not asyncio.current_task()
+            and not reader.done()
+        ):
             reader.cancel()
             try:
                 await reader

@@ -183,18 +183,18 @@ class CallSession:
         await self._set_state("ended")
 
     async def _fail(self, message: str) -> None:
-        if self._closing:
+        if self._closing or self._ended:
             return
         await self.send({"type": "error", "message": message})
         self._ended = True
         await self._cancel_turn()
         self._cancel_silence()
+        await self._set_state("ended")
         for closer in (self.stt, self.tts):
             try:
                 await closer.close()
             except Exception:
                 pass
-        await self._set_state("ended")
 
     # ------------------------------------------------------------------ turns
     async def _start_turn(self, user_text: str | None = None) -> None:
@@ -213,6 +213,8 @@ class CallSession:
             async for event in self.llm.chat(
                 self.messages, tools_mod.TOOL_SCHEMAS, tools_mod.dispatch
             ):
+                if self._ended:
+                    break  # a provider failed mid-turn; session already errored
                 if event.get("type") == "text":
                     buffer = await self._flush(buffer + str(event.get("delta", "")))
                 elif event.get("type") == "tool":
@@ -224,7 +226,8 @@ class CallSession:
                             "result": event.get("result"),
                         }
                     )
-            await self._flush(buffer, final=True)
+            if not self._ended:
+                await self._flush(buffer, final=True)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -248,11 +251,19 @@ class CallSession:
         await self._speak(text)
 
     async def _speak(self, text: str) -> None:
+        if self._closing or self._ended:
+            return
         self.transcript.append({"role": "agent", "text": text})
         await self.send(
             {"type": "transcript", "role": "agent", "text": text, "final": True}
         )
-        audio = await self.tts.synth(text)
+        try:
+            audio = await self.tts.synth(text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            await self._fail(f"text-to-speech unavailable: {type(e).__name__}")
+            return
         if not self._stats_sent:
             self._stats_sent = True
             await self._send_stats()
@@ -297,7 +308,7 @@ class CallSession:
     def _cancel_silence(self) -> None:
         task = self._silence_task
         self._silence_task = None
-        if task and not task.done():
+        if task and task is not asyncio.current_task() and not task.done():
             task.cancel()
 
     async def _cancel_turn(self) -> None:

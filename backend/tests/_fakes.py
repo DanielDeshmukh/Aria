@@ -15,7 +15,8 @@ DEFAULT_SUMMARY = {
 
 
 class FakeSTT:
-    def __init__(self) -> None:
+    def __init__(self, start_error: Exception | None = None) -> None:
+        self.start_error = start_error
         self.started = False
         self.closed = False
         self.audio: list[str] = []
@@ -23,6 +24,8 @@ class FakeSTT:
         self.on_speech_start = None
 
     async def start(self, on_transcript, on_speech_start) -> None:
+        if self.start_error is not None:
+            raise self.start_error
         self.started = True
         self.on_transcript = on_transcript
         self.on_speech_start = on_speech_start
@@ -49,9 +52,9 @@ class FakeSTT:
 class FakeTTS:
     mime = "audio/wav"
 
-    def __init__(self) -> None:
+    def __init__(self, fail: bool = False) -> None:
         self.synthed: list[str] = []
-        self.fail = False
+        self.fail = fail
 
     async def synth(self, text: str) -> bytes:
         if self.fail:
@@ -70,6 +73,7 @@ class FakeLLM:
       ("tool", name, args)  -> yields a tool event (executes via execute_tool)
       ("text", sentence)    -> yields one text delta
       ("hang",)             -> sleeps until cancelled (sets self.cancelled)
+      ("error", message)    -> raises RuntimeError(message)
     """
 
     def __init__(self, rounds: list[tuple] | None = None, summary: dict | str | Exception | None = None) -> None:
@@ -95,6 +99,8 @@ class FakeLLM:
                 except asyncio.CancelledError:
                     self.cancelled = True
                     raise
+            elif kind == "error":
+                raise RuntimeError(str(r[1]) if len(r) > 1 else "provider down")
 
     async def complete(self, messages) -> str:
         self.complete_calls += 1
