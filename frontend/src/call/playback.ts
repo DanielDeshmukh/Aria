@@ -122,7 +122,9 @@ class Playback {
       source.start(when);
       this.nextTime = when + item.buffer.duration;
       this.active.add(source);
+      const gen = this.epoch;
       source.onended = () => {
+        if (gen !== this.epoch) return; // flushed generation — stale end, ignore
         this.active.delete(source);
         this.pump();
       };

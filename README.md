@@ -308,6 +308,8 @@ repeat line, and the session is one-shot (one call per connection).
   click interceptor ignores paths outside the section list, so the hero's
   `href="/call"` navigates natively, and on `/call` the plain `href="/"`
   back link returns to the site (the hook is not mounted there).
+* Headphones are recommended on `/call`: barge-in is server-driven only (the
+  mic is never muted client-side), so loud speaker output can re-trigger it.
 
 ## 10. Environment variables
 
@@ -376,6 +378,7 @@ macOS/Linux equivalent: `curl http://localhost:7860/api/health`.
 | `Address already in use` :5173/:8000/:7860 | stale dev/uvicorn/docker process | stop the listener (Windows: `Get-NetTCPConnection -LocalPort 5173`) or pick another `--port` |
 | pip `ResolutionImpossible` during Docker build | old pip 24 resolver + registry timeouts | image already runs `pip install --upgrade pip` first — rebuild |
 | Theme flashes light on reload | JS disabled or localStorage cleared | bootstrap script in `index.html` defaults correctly; report a bug if seen |
+| Aria interrupts herself mid-reply | speaker output re-enters the mic | use headphones (recommended); barge-in is server-driven, the client mic stays open |
 
 ## 14. Assignment documents
 
