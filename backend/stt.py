@@ -1,13 +1,17 @@
-"""Deepgram streaming STT (nova-3, en-IN, keyterm ORD ids).
+"""Deepgram streaming STT (nova-3, language=multi, keyterm ORD ids).
 
-No I/O in the constructor: `start()` opens the socket so missing-key /
-network failures surface as the session's error event, never at import.
+language=multi (not en-IN): en-IN returned an empty conf=0.0 final for the
+Hinglish runbook line "Mera order kahan hai?" while multi transcribes it at
+conf 1.0 with equal English quality. No I/O in the constructor: `start()`
+opens the socket so missing-key / network failures surface as the session's
+error event, never at import.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -21,8 +25,8 @@ SpeechStartCb = Callable[[], Awaitable[None]]
 
 DEEPGRAM_WS_URL = (
     "wss://api.deepgram.com/v1/listen"
-    "?model=nova-3&language=en-IN&encoding=linear16&sample_rate={sample_rate}"
-    "&interim_results=true&endpointing=200&smart_format=true"
+    "?model=nova-3&language=multi&encoding=linear16&sample_rate={sample_rate}"
+    "&interim_results=true&endpointing=300&smart_format=true"
     "&keyterm=ORD&keyterm=ORD-101&keyterm=ORD-102&keyterm=ORD-103"
 )
 
@@ -70,6 +74,9 @@ class DeepgramSTT:
         self._api_key = api_key
         self._ws = None
         self._reader: asyncio.Task | None = None
+        self._keepalive: asyncio.Task | None = None
+        self._last_audio_at = 0.0
+        self._silence = b"\x00" * (sample_rate // 10)  # 100 ms linear16
         self._on_transcript: TranscriptCb | None = None
         self._on_speech_start: SpeechStartCb | None = None
 
@@ -91,10 +98,34 @@ class DeepgramSTT:
             close_timeout=5,
         )
         self._reader = asyncio.create_task(self._read())
+        self._keepalive = asyncio.create_task(self._keepalive_loop())
+
+    async def _keepalive_loop(self) -> None:
+        """Feed silence to Deepgram at mic cadence while the client is idle.
+
+        Proven by raw-socket probes: endpointing only fires when packets keep
+        ARRIVING after the silent gap — burst-then-idle streams got their final
+        only at the ~12 s idle close (code 1011), and even 100 ms of silence
+        every 0.5 s never finalized; the cadence must stay near real-time
+        (one frame per ~100 ms, exactly like a live microphone). Client frames
+        reset the timestamp, so speech audio is never interleaved."""
+        try:
+            while True:
+                await asyncio.sleep(0.1)
+                ws = self._ws
+                if ws is None:
+                    return
+                if time.monotonic() - self._last_audio_at >= 0.25:
+                    await ws.send(self._silence)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
 
     async def send_audio(self, b64: str) -> None:
         if self._ws is None:
             raise RuntimeError("start() first")
+        self._last_audio_at = time.monotonic()
         await self._ws.send(b64_to_pcm16(b64))
 
     async def _read(self) -> None:
@@ -117,20 +148,22 @@ class DeepgramSTT:
             pass  # socket dropped mid-call; session owns the UX
 
     async def close(self) -> None:
+        keepalive, self._keepalive = self._keepalive, None
         reader, self._reader = self._reader, None
         ws, self._ws = self._ws, None
-        if (
-            reader is not None
-            and reader is not asyncio.current_task()
-            and not reader.done()
-        ):
-            reader.cancel()
-            try:
-                await reader
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
+        for task in (keepalive, reader):
+            if (
+                task is not None
+                and task is not asyncio.current_task()
+                and not task.done()
+            ):
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    pass
         if ws is not None:
             try:
                 await ws.close()

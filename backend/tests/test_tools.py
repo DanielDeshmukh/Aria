@@ -32,10 +32,13 @@ def test_get_order_details_unknown_id_returns_exact_pdf_phrase() -> None:
     assert result["message"] == NOT_FOUND_MSG
 
 
-def test_garbage_order_id_returns_not_found_not_crash() -> None:
-    result = tools.dispatch("get_order_details", {"order_id": "banana"})
-    assert result["found"] is False
-    assert result["error"] == "NOT_FOUND"
+def test_non_id_phrases_get_no_order_id_guard_not_not_found() -> None:
+    for raw in ("banana", "just now", "Order", "?"):
+        result = tools.dispatch("get_order_details", {"order_id": raw})
+        assert result["found"] is False, raw
+        assert result["error"] == "NO_ORDER_ID", raw
+        assert result["needs_id"] is True, raw
+        assert "ask the customer" in result["message"]
 
 
 def test_flags_per_order_match_pdf_scenarios() -> None:

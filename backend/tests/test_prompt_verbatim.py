@@ -51,3 +51,15 @@ def test_guardrails_present() -> None:
 def test_tools_documented() -> None:
     for name in ("get_order_details", "get_policy_info", "end_call"):
         assert name in SYSTEM_PROMPT
+
+
+def test_order_id_discipline_after_runbook() -> None:
+    """Runbook scenarios 5/9/11: invented 'ORD-099' example in a reply, tool
+    calls on 'Order'/'just now' — all stay explicitly forbidden."""
+    for needle in (
+        "CALL it whenever the customer's words contain any digits",
+        'no digits at all (e.g. "just now", "Order", "?")',
+        "Never guess an id (e.g. ORD-099)",
+        'no "it might be ORD-099"',
+    ):
+        assert needle in SYSTEM_PROMPT, f"missing id discipline: {needle!r}"

@@ -124,6 +124,11 @@ class CallSession:
         if self._closing or self._ended or not self._started:
             return
         if not is_final:
+            text = (text or "").strip()
+            # Deepgram does not emit SpeechStarted on our live config; a real
+            # interim during our audio is the reliable barge-in signal.
+            if text and self.state in ("speaking", "thinking"):
+                await self._on_speech_start()
             now = time.monotonic()
             if now - self._last_interim_at >= INTERIM_MIN_INTERVAL:
                 self._last_interim_at = now

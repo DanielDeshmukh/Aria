@@ -13,6 +13,15 @@ CASES = {
     "o r d one oh three": "ORD-103",
     "999": "ORD-999",
     "ORD-999": "ORD-999",
+    # live-runbook STT variants (run 2 of the 14-scenario runbook)
+    "ORD-one hundred three": "ORD-103",
+    "What's the shipping charge on ORD-one Hundred 2?": "ORD-102",
+    "ORD-nine ninety nine": "ORD-999",
+    "ORD-one 102": "ORD-102",
+    "I got ORD-one hundred two two weeks ago": "ORD-102",
+    "Cancel ORD-one hundred three": "ORD-103",
+    "ORD1O1": "ORD-101",  # Deepgram smart_format final: letter O between digits
+    "Where is my order, ORD1O1": "ORD-101",
 }
 
 
@@ -38,3 +47,8 @@ def test_does_not_map_standalone_o_as_zero() -> None:
 
 def test_four_digit_ids_keep_all_digits() -> None:
     assert normalize_order_id("ORD-1001") == "ORD-1001"
+
+
+def test_unrecognized_ids_return_none() -> None:
+    for raw in ("?", "my product arrived broken, just now", "ORD two", "Can I cancel ORD?"):
+        assert normalize_order_id(raw) is None, raw

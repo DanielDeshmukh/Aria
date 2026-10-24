@@ -294,6 +294,27 @@ def test_interims_throttled_and_empty_reply_falls_back_to_listening() -> None:
     asyncio.run(scenario())
 
 
+def test_interim_barge_in_when_deepgram_omits_speech_started() -> None:
+    """Live runbook scenario 8: Deepgram never sends SpeechStarted on our
+    config — a real interim while we are speaking must trigger barge-in."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await session.handle({"type": "start"})
+        assert box.states()[-1] == "speaking"
+        await stt.emit_interim("where is my order ORD-")
+        await wait_until(
+            lambda: box.of("barge_in") and box.states()[-1] == "listening",
+            what="interim barge-in",
+        )
+        assert session._silence_task is not None
+        await stt.emit_interim("where is my order ORD-101")
+        assert len(box.of("barge_in")) == 1
+        assert box.of("error") == []
+
+    asyncio.run(scenario())
+
+
 def test_messages_before_start_are_ignored() -> None:
     async def scenario() -> None:
         session, box, stt, llm, tts = make()

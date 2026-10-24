@@ -69,7 +69,21 @@ TOOL_SCHEMAS: list[dict] = [
 
 def get_order_details(order_id: str) -> dict:
     normalized = normalize_order_id(order_id)
-    order = ORDERS.get(normalized) if normalized else None
+    if normalized is None:
+        # Runbook scenarios 9/11: the model called with "Order"/"just now".
+        # A non-id must never come back as NOT_FOUND — steer the reply to
+        # ask the customer to say the order id again instead.
+        return {
+            "found": False,
+            "error": "NO_ORDER_ID",
+            "requested": order_id,
+            "needs_id": True,
+            "message": (
+                "No readable order id was given. Do NOT say the order couldn't be "
+                "found — ask the customer to say the order id again."
+            ),
+        }
+    order = ORDERS.get(normalized)
     if order is None:
         return {
             "found": False,

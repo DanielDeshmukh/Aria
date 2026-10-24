@@ -91,10 +91,11 @@ def test_live_voice_tool_turn_and_summary() -> None:
             )
             greeting_stats = next(e for e in events if e.get("type") == "stats")
             # Session start -> first audible audio (Deepgram connect + greeting
-            # synth): measured 2.7-3.6s across runs. The plan's 3000 ms target
-            # becomes a hard gate in T21's latency run; here it is a sanity
-            # bound so a stall cannot pass unnoticed.
-            assert 0 <= greeting_stats["first_audio_ms"] <= 5000, greeting_stats
+            # synth): warm p50 measured 1869 ms in T21's latency run, but a cold
+            # Sarvam connect under API load has been observed up to ~7.5 s here.
+            # This is a stall-detection sanity bound, not the latency gate —
+            # T21's latency run owns that.
+            assert 0 <= greeting_stats["first_audio_ms"] <= 10000, greeting_stats
             audio = events[i]
             assert audio["mime"] == "audio/l16;rate=16000"
             await session.handle({"type": "playback_done"})
@@ -117,7 +118,7 @@ def test_live_voice_tool_turn_and_summary() -> None:
                         "data": base64.b64encode(frame).decode("ascii"),
                     }
                 )
-            # trailing silence: Deepgram (endpointing=200 ms) finalizes the
+            # trailing silence: Deepgram (endpointing=300 ms) finalizes the
             # utterance only when it sees silence in the stream.
             silence = base64.b64encode(b"\x00" * FRAME_BYTES).decode("ascii")
             for _ in range(10):  # 1 s of silence
