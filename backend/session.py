@@ -89,16 +89,24 @@ class CallSession:
         self._turn_started = time.monotonic()
         self._stats_sent = False
         await self._set_state("connecting")
+        greeting = asyncio.create_task(self._speak(GREETING))
         try:
             await self.stt.start(
                 on_transcript=self._on_transcript,
                 on_speech_start=self._on_speech_start,
             )
         except Exception as e:
+            greeting.cancel()
+            try:
+                await greeting
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
             await self._fail(f"speech-to-text unavailable: {type(e).__name__}")
             return
         try:
-            await self._speak(GREETING)
+            await greeting
         except Exception as e:
             await self._fail(f"text-to-speech unavailable: {type(e).__name__}")
 
@@ -262,6 +270,8 @@ class CallSession:
             raise
         except Exception as e:
             await self._fail(f"text-to-speech unavailable: {type(e).__name__}")
+            return
+        if self._ended or self._closing:
             return
         if not self._stats_sent:
             self._stats_sent = True

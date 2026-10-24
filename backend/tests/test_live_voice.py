@@ -117,7 +117,7 @@ def test_live_voice_tool_turn_and_summary() -> None:
                         "data": base64.b64encode(frame).decode("ascii"),
                     }
                 )
-            # trailing silence: Deepgram (endpointing=300 ms) finalizes the
+            # trailing silence: Deepgram (endpointing=200 ms) finalizes the
             # utterance only when it sees silence in the stream.
             silence = base64.b64encode(b"\x00" * FRAME_BYTES).decode("ascii")
             for _ in range(10):  # 1 s of silence

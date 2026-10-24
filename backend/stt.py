@@ -22,7 +22,7 @@ SpeechStartCb = Callable[[], Awaitable[None]]
 DEEPGRAM_WS_URL = (
     "wss://api.deepgram.com/v1/listen"
     "?model=nova-3&language=en-IN&encoding=linear16&sample_rate={sample_rate}"
-    "&interim_results=true&endpointing=300&smart_format=true"
+    "&interim_results=true&endpointing=200&smart_format=true"
     "&keyterm=ORD&keyterm=ORD-101&keyterm=ORD-102&keyterm=ORD-103"
 )
 
