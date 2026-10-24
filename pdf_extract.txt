@@ -1,0 +1,186 @@
+=== PAGE 1 ===
+DATASTRAW ASSESSMENT TEST  |  AI VOICE AGENT 
+Confidential  •  For Candidate Evaluation Only 
+DATASTRAW ASSESSMENT TEST 
+Hiring Assignment: Build an AI Voice CX Agent for a D2C Brand 
+Submission deadline: 4 days    |    Expected effort: Approximately 1.5–2 days of focused work 
+ 
+ 
+1. What You'll Build 
+Build a browser-based AI Voice Customer Support Agent for a fictional D2C skincare brand, Aura Skincare. 
+When an evaluator opens your application and clicks Start Call, they should be able to speak naturally with the AI agent using 
+their computer's microphone and hear the agent respond through their speakers. 
+The agent should be able to: 
+• Have a natural voice conversation with a customer. 
+• Answer questions using Aura Skincare's brand and policy information. 
+• Look up live order information when required. 
+• Follow brand policies and avoid making promises outside those policies. 
+• Recognise when it does not have enough information to answer something. 
+• Generate a transcript and structured summary after the call. 
+Note on Telephony Setup 
+You are not required to set up telephony or purchase a phone number. The entire experience can run directly in the browser. 
+ 
+2. Core Requirements 
+A. Voice Conversation 
+The customer should be able to speak to the agent and receive a spoken response. The agent should: 
+• Understand normal conversational speech. 
+• Respond naturally and concisely (preferably in an Indian voice). 
+• Maintain context throughout the conversation. 
+• Avoid unnecessary repetition. 
+• Have reasonable response speed without long, awkward pauses. 
+Persona: Aria from Aura Skincare — friendly, professional and concise Indian customer support specialist. 
+B. Brand Knowledge, Guardrails & Graceful Degradation 
+The agent must use the information provided below to answer customer questions accurately. It should also follow the brand's 
+policies rather than simply agreeing to whatever the customer asks. 
+Policy Enforcement Example: Customer: "I bought this 20 days ago and have opened it. Can I return it?" 
+The agent should politely explain that the request falls outside the return policy rather than promising a refund. 
+Out-of-Scope Example: Customer: "Can you book me a flight to Goa?" 
+The agent should politely explain that it can only help with Aura Skincare-related queries. 
+Graceful Degradation & Edge Cases: If the customer mumbles, audio is unclear, or an order ID does not exist in the 
+database, the agent should handle it gracefully (e.g., "I couldn't locate an order with that number, could you please repeat or 
+verify the ID?") rather than hallucinating or crashing. 
+C. Order Lookup — Tool / Function Calling 
+The agent must be able to retrieve order information from the provided mock order database. At minimum, implement 
+get_order_details(order_id). 
+For example: Customer: "Can you tell me where my order ORD-101 is?" 
+The agent should identify that it needs order information, call the relevant tool, retrieve the order details and communicate the 
+result naturally to the customer. 
+The agent should also handle: invalid order IDs, missing order IDs, and orders that are not eligible for a requested action. You 
+may implement additional tools if you think they improve the experience, but this is not required. 
+  
+
+=== PAGE 2 ===
+DATASTRAW ASSESSMENT TEST  |  AI VOICE AGENT 
+Confidential  •  For Candidate Evaluation Only 
+D. Post-Call Summary 
+When the call ends, the application should display: 
+• 1. Call transcript: A chronological transcript showing both the customer and agent. 
+• 2. Structured call outcome: Formatted in JSON (the exact structure is up to you, as long as key data is captured): 
+{ 
+  "customer_intent": "ORDER_TRACKING", 
+  "order_id": "ORD-101", 
+  "resolution_status": "RESOLVED", 
+  "call_summary": "Customer asked about the delivery status of ORD-101. The order is out for delivery and 
+expected by 6 PM today." 
+} 
+ 
+E. Simple Testing Interface 
+The evaluator should be able to easily test your agent. At minimum, include: 
+• Start Call button. 
+• End Call button. 
+• Live State Indicator: Clear visual feedback of the agent's current state (Listening / Thinking / Speaking). 
+• Test Orders Helper: A visible panel or helper card directly on the page showing the available sample order IDs (ORD-101, 
+ORD-102, ORD-103) and their details, so evaluators can test order lookups immediately without having to reference external 
+documents. 
+• Call Log & Summary: Transcript or call log after the conversation concludes. 
+The interface does not need to be highly designed. Functionality and user experience matter more than visual complexity. 
+3. Aura Skincare — Brand Information 
+Brand Overview: Aura Skincare is a premium organic Indian skincare brand focused on simple, effective skincare products 
+made with thoughtfully selected ingredients. 
+Shipping Policy: Free delivery on orders above ₹499. Orders below ₹499 have a ₹50 shipping fee. Standard delivery takes 
+3–5 business days. 
+Return & Refund Policy: Returns are accepted within 7 days of delivery for unopened, unused products in original 
+packaging. Damaged or defective products must be reported within 48 hours of delivery with photos for replacement. 
+Cancellation Policy: Orders can be cancelled only while their status is Processing. Once an order is Shipped or Out for 
+Delivery, it cannot be cancelled (customers may refuse delivery at doorstep). 
+Cash on Delivery: COD is available for orders up to ₹2,500. Customers can pay by cash or UPI at the doorstep. 
+4. Mock Order Database 
+Order ID Customer Product Value Status Notes 
+ORD-101 Priya Sharma Vitamin C Serum (30ml) ₹699 Out for Delivery BlueDart — BD-982103. 
+Expected by 6 PM today 
+ORD-102 Rahul Verma Hydrating Sunscreen 
+SPF 50 
+₹499 Delivered Delhivery — DL-441029. 
+Delivered 14 days ago 
+ORD-103 Ananya Patel Green Tea Face Wash 
++ Toner 
+₹850 Processing Ordered 3 hours ago. Eligible for 
+cancellation 
+ 
+  
+
+=== PAGE 3 ===
+DATASTRAW ASSESSMENT TEST  |  AI VOICE AGENT 
+Confidential  •  For Candidate Evaluation Only 
+5. Technology 
+The technology stack and architecture are completely up to you. You may use any tools, frameworks, APIs, or platforms that 
+you are comfortable with. 
+Common architectural approaches you can take: 
+• Modular Pipeline: Composing custom Speech-to-Text (STT) → LLM reasoning & tool execution → Text-to-Speech (TTS) audio 
+streaming. 
+• Realtime Multimodal APIs: Direct speech-to-speech / audio streaming models. 
+• Voice AI Frameworks: Any existing open-source or managed voice frameworks. 
+Languages & Stacks: You may use React, Next.js, Vue, Python, Node.js or any other technologies you prefer. 
+We are not evaluating you on whether you use a particular vendor. We are more interested in how you approach the problem, 
+the natural feel and latency of the resulting experience, and your understanding of what you built. 
+6. AI Tools Are Encouraged 
+You are absolutely encouraged to use AI-assisted development tools. You may use tools such as: 
+• Cursor, Claude Code, ChatGPT / Codex, GitHub Copilot, Windsurf, Google Gemini, or other AI coding/research tools. 
+This is how modern engineering teams increasingly work. However, you should understand the system you submit. During the 
+evaluation, we may ask you to explain: 
+• Why you chose your architecture. 
+• How the voice pipeline works. 
+• How your agent decides when to use a tool. 
+• How you implemented the brand guardrails. 
+• What you would change or improve. 
+We are not looking for code written entirely from scratch. We are looking for someone who can use modern tools effectively 
+and understands what they are building. 
+7. Deployment 
+Your application should be publicly accessible so that we can test it without setting up your development environment. 
+• Vercel, Render, Railway, Fly.io, Netlify, Hugging Face Spaces, or any equivalent platform. 
+You do not need to purchase a domain. If your chosen AI/voice provider requires API credits, free trials or free tiers are 
+completely acceptable. 
+8. Optional — Go Beyond the Basics 
+The following are not required, but you can implement them if you think they meaningfully improve the product: 
+• Barge-in / interruption handling — agent stops speaking when the customer interrupts. 
+• Hinglish support. 
+• Multiple tools. 
+• Better handling of ambiguous customer requests. 
+• Improved call experience or UI. 
+• Multi-brand support. 
+• Very low latency. 
+• Anything else you think would make this a better real-world customer support agent. 
+Don't add features just for the sake of adding them. We value thoughtful decisions more than feature count. 
+9. Tell Us How You Think 
+Along with your application, include a short section in your README answering the following: 
+• 1. Why did you choose your particular architecture and technology stack? 
+• 2. What was the most difficult part of the assignment, and how did you solve it? 
+• 3. If you had one more week to work on this, what would you improve first and why? 
+• 4. Imagine this agent is handling 1,000 customer conversations a day. What do you think would need to change or improve? 
+There are no 'correct' answers here. We want to understand how you think about the product and the engineering behind it. 
+  
+
+=== PAGE 4 ===
+DATASTRAW ASSESSMENT TEST  |  AI VOICE AGENT 
+Confidential  •  For Candidate Evaluation Only 
+10. What to Submit 
+Please submit: 
+• 1. Public Application URL: A working link where we can open the application, allow microphone access and test the voice 
+agent. 
+• 2. GitHub Repository: Source code, README.md (including your answers to Section 9), architecture/approach, setup 
+instructions, and .env.example. 
+• 3. 3–5 Minute Demo Video: Show the voice agent working, at least one order lookup, one policy-related conversation, your 
+post-call transcript and summary, and a brief architecture walkthrough. 
+• 4. Short Approach Note: Include 2–3 sentences summarising your approach. 
+• 5. LinkedIn Profile: Please include a link to your LinkedIn profile and make sure the link is accessible. 
+11. Submission 
+Please send your submission to: 
+WHERE TO SEND YOUR SUBMISSION 
+Please submit your completed assignment to: 
+• Primary: ozair.shaikh@datastraw.in | aryan.jaiswal@datastraw.in 
+• CC: talent@datastraw.in 
+• Subject: AI Voice Agent Assignment - [Your Full Name] 
+ 
+Please include in your email: 
+1. Application URL 
+2. GitHub Repository 
+3. Demo Video Link 
+4. LinkedIn Profile Link (ensure working) 
+5. 2–3 sentence approach note 
+ 
+What We're Looking For 
+We're not expecting a production-ready voice AI platform. We're looking for someone who can take an open-ended problem, 
+learn what they need to learn, use modern AI tools effectively, build a working solution, and think about both the technology 
+and the customer experience. 
+Good luck — and have fun building! 
+
