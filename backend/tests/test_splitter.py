@@ -20,6 +20,13 @@ def test_partial_tail_after_complete_sentence() -> None:
 def test_price_decimal_never_splits() -> None:
     sents, rest = split_sentences("The order is ₹499.00 as shown. Done.")
     assert sents == ["The order is ₹499.00 as shown.", "Done."]
+    assert rest == ""
+
+
+def test_grouped_price_never_splits() -> None:
+    sents, rest = split_sentences("Total ₹1,499.00 today. Done.")
+    assert sents == ["Total ₹1,499.00 today.", "Done."]
+    assert rest == ""
 
 
 def test_abbreviation_letter_period_letter_never_splits() -> None:

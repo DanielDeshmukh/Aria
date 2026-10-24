@@ -1,3 +1,6 @@
+import asyncio
+import json
+
 import pytest
 
 from backend.llm import RoundAccumulator, feed_chunk, finalize_round
@@ -112,3 +115,59 @@ def test_object_style_chunks_supported() -> None:
     assert feed_chunk(acc, Chunk()) == []
     _, tools = finalize_round(acc)
     assert tools[0]["name"] == "end_call"
+
+
+def test_tool_message_uses_id_from_first_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """History integrity: id arrives on fragment 1, name/args on later ones;
+    the tool message appended to history must carry that same id."""
+    from backend.llm import GroqLLM
+
+    round_one = [
+        tool_chunk(id="call_abc", name="get_order_details"),
+        tool_chunk(arguments='{"order_'),
+        tool_chunk(arguments='id": "ORD-101"}', finish="tool_calls"),
+    ]
+    round_two = [
+        text_chunk("Your order "),
+        text_chunk("is out for delivery.", finish="stop"),
+    ]
+    rounds = [round_one, round_two]
+
+    async def fake_create(**kwargs):
+        chunks = rounds.pop(0)
+
+        async def gen():
+            for c in chunks:
+                yield c
+
+        return gen()
+
+    llm = GroqLLM()
+    monkeypatch.setattr(llm._client.chat.completions, "create", fake_create)
+
+    messages = [{"role": "user", "content": "where is ORD-101"}]
+    executed: list[tuple] = []
+
+    def execute_tool(name: str, args: dict) -> dict:
+        executed.append((name, args))
+        return {"found": True, "order": {"id": args["order_id"]}}
+
+    async def run() -> list[dict]:
+        return [e async for e in llm.chat(messages, None, execute_tool)]
+
+    events = asyncio.run(run())
+
+    assert executed == [("get_order_details", {"order_id": "ORD-101"})]
+    assistant = messages[1]
+    assert assistant["role"] == "assistant"
+    assert assistant["tool_calls"][0]["id"] == "call_abc"
+    tool_msg = messages[2]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["tool_call_id"] == "call_abc"
+    assert json.loads(tool_msg["content"]) == {"found": True, "order": {"id": "ORD-101"}}
+    assert messages[-1] == {
+        "role": "assistant",
+        "content": "Your order is out for delivery.",
+    }
+    deltas = "".join(e["delta"] for e in events if e["type"] == "text")
+    assert deltas == "Your order is out for delivery."
