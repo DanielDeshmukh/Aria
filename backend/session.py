@@ -130,7 +130,6 @@ class CallSession:
             return
         text = (text or "").strip()
         if not text:
-            self._arm_silence()
             return
         self._cancel_silence()
         self._still_there_sent = False

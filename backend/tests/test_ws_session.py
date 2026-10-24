@@ -178,6 +178,39 @@ def test_silence_asks_still_there_once(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(scenario())
 
 
+def test_still_there_fires_despite_empty_finals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deepgram emits empty finals throughout pure silence (live repro). They
+    must not reset the timer — with SILENCE=0.15 and empty finals every 20 ms
+    the old code never fired the nudge."""
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.15)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+
+        async def chatter() -> None:
+            for _ in range(30):
+                await stt.emit_final("")
+                await asyncio.sleep(0.02)
+
+        chatter_task = asyncio.create_task(chatter())
+        await wait_until(
+            lambda: any(
+                m.get("text") == STILL_THERE for m in box.of("transcript")
+            ),
+            what="still-there despite empty finals",
+            timeout=2.0,
+        )
+        await chatter_task
+        await asyncio.sleep(0.1)
+        count = sum(
+            1 for m in box.of("transcript") if m.get("text") == STILL_THERE
+        )
+        assert count == 1
+
+    asyncio.run(scenario())
+
+
 def test_barge_in_cancels_in_flight_turn() -> None:
     async def scenario() -> None:
         session, box, stt, llm, tts = make(
