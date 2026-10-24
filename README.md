@@ -59,7 +59,7 @@ spec, test script and 4-day schedule live in
 | **1** | Interactive master-plan site + FastAPI scaffold + Docker/HF deployment layout | shipped |
 | **2** | Voice session: WebSocket, streaming STT → LLM → TTS with tool calling | backend shipped (`/ws/call`) |
 | **3** | Tools, guardrails, call summary | backend shipped · owner dashboard pending |
-| — | In-browser call screen: mic capture, WS session, state badge, playback | shipped · transcript/orders/summary panels in progress |
+| — | In-browser call screen: mic capture, WS session, state badge, playback | shipped · transcript/summary panels in progress |
 | **4** | Hugging Face Space launch, demo assets, final submission | pending |
 
 ## 2. Architecture
@@ -137,7 +137,8 @@ Aria/
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React planning site (Vite + Tailwind)
 │   ├── src/
-│   │   ├── call/            #   CallApp, useVoiceSession, useMic, playback
+│   │   ├── call/            #   CallApp, useVoiceSession, useMic, playback,
+│   │   │                    #   OrdersPanel (ORD-101..103 helper)
 │   │   ├── components/      #   Nav, Hero, Lens, Requirements, …
 │   │   ├── routes.ts        #   clean-route scroll routing
 │   │   └── index.css        #   @theme tokens, light/dark palettes

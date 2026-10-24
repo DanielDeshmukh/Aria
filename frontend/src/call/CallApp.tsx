@@ -1,5 +1,6 @@
 import { Chip } from "../components/ui";
 import CallControls from "./CallControls";
+import OrdersPanel from "./OrdersPanel";
 import StateBadge from "./StateBadge";
 import { useVoiceSession } from "./useVoiceSession";
 
@@ -40,13 +41,13 @@ export default function CallApp() {
         )}
 
         {/* reserved transcript region — LiveTranscript (T17) */}
-        <div
-          aria-label="live transcript"
-          className="min-h-[220px] rounded-2xl border border-line bg-card/60"
-        />
-
-        {/* Test Orders Helper panel (T16) */}
-        <div data-testid="orders-panel" className="mt-6" />
+        <div className="grid gap-6 md:grid-cols-[1fr_330px]">
+          <div
+            aria-label="live transcript"
+            className="min-h-[320px] rounded-2xl border border-line bg-card/60"
+          />
+          <OrdersPanel />
+        </div>
 
         {/* Post-call summary card (T18) */}
         <div data-testid="summary-card" className="mt-6" />
