@@ -566,22 +566,22 @@ useVoiceSession(): { state, transcript, tools, stats, summary, error, start(), e
 
 **Files:** `README.md` (rewrite), `requirements.txt`/`requirements-dev.txt` (finalize), `.env.example` (verify only).
 **Steps:**
-1. [ ] README structure (HF front matter first):
+1. [x] README structure (HF front matter first):
    - Front matter (`title/sdk/app_port` as above).
    - Title + live URL + demo GIF/video placeholder `<!-- demo -->` (filled after T24).
    - **Quick start:** clone → `python -m venv .venv && pip install -r requirements-dev.txt` → copy `.env.example` → `.env` (fill 3 keys) → `cd frontend && npm ci && npm run build` → `python -m uvicorn backend.main:app --port 8000` → open `/call`.
    - **Architecture:** diagram (text version from plan header) + per-stage roles + latency budget note.
-   - **How guardrails work:** policy computed in code (`policy.py` reasons returned by tools), prompt only phrases; injection resistance explanation; ₹499 boundary as thoughtful edge case.
-   - **Test scenarios:** the 14-row table (§8 of spec) with expected results.
-   - **Notes for evaluators:** headphones (echo), sample orders on the page, mic permission, Space may sleep 48 h (wake by opening URL first).
-   - **Section 9 answers (4):** draft from spec §10 starting points — **must be rewritten in Daniel's own voice before submission** (they will be asked follow-ups): ① why this stack, ② hardest part (order-ID STT mangling + latency; solved via normalization + sentence-level TTS flush), ③ one more week (eval harness, VAD tuning, Hinglish, analytics), ④ 1,000 calls/day (concurrency, fallbacks, cost, monitoring, PII, human handoff, real order API, regression tests).
+   - **How guardrails work:** policy computed in code (`policy.py` reasons returned by tools), prompt only phrases; injection resistance explanation; ₹499 boundary as thoughtful edge case. → new §15
+   - **Test scenarios:** the 14-row table (§8 of spec) with expected results. → new §16 (all 14 marked pass on local scripted run; live-URL repeat pending T22/T24)
+   - **Notes for evaluators:** headphones (echo), sample orders on the page, mic permission, Space may sleep 48 h (wake by opening URL first). → new §17
+   - **Section 9 answers (4):** draft from spec §10 starting points — **must be rewritten in Daniel's own voice before submission** (they will be asked follow-ups): ① why this stack, ② hardest part (order-ID STT mangling + latency; solved via normalization + sentence-level TTS flush), ③ one more week (eval harness, VAD tuning, Hinglish, analytics), ④ 1,000 calls/day (concurrency, fallbacks, cost, monitoring, PII, human handoff, real order API, regression tests). → new §18 (first-person draft, to re-read/own before sending)
    - Setup/env table (3 keys, where they live — never in browser).
-2. [ ] `requirements.txt` final: `fastapi`, `uvicorn[standard]`, `openai>=1.50`, `websockets>=12`, `python-dotenv>=1`. `requirements-dev.txt`: `-r requirements.txt`, `pytest>=8`, `httpx>=0.27`, `pytest-timeout>=3`.
-3. [ ] `.env.example` unchanged (3 keys, server-side comment) ✓ verify.
-4. [ ] Secrets scan (must be clean):
-   - `git grep -nE "(sk-[A-Za-z0-9]{20}|gsk_[A-Za-z0-9]{20}|dg_[A-Za-z0-9]{20}|hf_[A-Za-z0-9]{30}|SARVAM_API_KEY=\S|GROQ_API_KEY=\S|DEEPGRAM_API_KEY=\S)"` → only `.env.example` empty-value lines allowed.
-   - `git log --all -p | grep -nE "(sk-[A-Za-z0-9]{20}|gsk_|dg_[A-Za-z0-9])"` → no hits (`.env` is gitignored — verify `.gitignore` covers it).
-5. [ ] Full validation: tsc + build + pytest → commit: `docs: submission README (architecture, guardrails, tests, Section 9 answers) + dep finalization`
+2. [x] `requirements.txt` final: `fastapi`, `uvicorn[standard]`, `openai>=1.50`, `websockets>=12`, `python-dotenv>=1`. `requirements-dev.txt`: `-r requirements.txt`, `pytest>=8`, `httpx>=0.27`, `pytest-timeout>=3`.
+3. [x] `.env.example` unchanged (3 keys, server-side comment) ✓ verify.
+4. [x] Secrets scan (must be clean):
+   - `git grep -nE "(sk-[A-Za-z0-9]{20}|gsk_[A-Za-z0-9]{20}|dg_[A-Za-z0-9]{20}|hf_[A-Za-z0-9]{30}|SARVAM_API_KEY=\S|GROQ_API_KEY=\S|DEEPGRAM_API_KEY=\S)"` → only `.env.example` empty-value lines allowed. **Clean** (2 hits, both this plan's own example text: `-e DEEPGRAM_API_KEY=...` literal and the scan command itself; `.env.example` values empty).
+   - `git log --all -p | grep -nE "(sk-[A-Za-z0-9]{20}|gsk_|dg_[A-Za-z0-9])"` → no hits ✓ (`.env` gitignored — verified).
+5. [x] Full validation: tsc + build + pytest (117 collected/passed, incl. local live tests) → commit: `docs: submission README (architecture, guardrails, tests, Section 9 answers) + dep finalization`
 
 ---
 
