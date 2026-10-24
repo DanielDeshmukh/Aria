@@ -131,10 +131,12 @@ Aria/
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React planning site (Vite + Tailwind)
 │   ├── src/
+│   │   ├── call/            #   useMic.ts (AudioWorklet mic capture)
 │   │   ├── components/      #   Nav, Hero, Lens, Requirements, …
 │   │   ├── routes.ts        #   clean-route scroll routing
 │   │   └── index.css        #   @theme tokens, light/dark palettes
 │   ├── index.html           #   no-flash theme bootstrap script
+│   ├── public/              #   pcm-worklet.js (mic → 16 kHz PCM16 frames)
 │   └── dist/                #   production build (generated, gitignored)
 ├── .github/workflows/ci.yml # CI: typecheck + build + pytest on every push
 ├── Dockerfile               # multi-stage: Node builds, Python serves
