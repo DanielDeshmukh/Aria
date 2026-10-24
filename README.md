@@ -14,9 +14,11 @@ app_port: 7860
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-38B2AC?logo=tailwindcss&logoColor=white)
 
 Browser-based AI voice customer-support agent for the **Datastraw AI + Tech
-internship assignment**. This repository currently ships the **Phase 1
-master-plan website** (React + Vite + Tailwind) served by **FastAPI**; the
-voice pipeline (Deepgram STT → Groq LLM with tools → Sarvam TTS) lands next.
+internship assignment**. The repository ships the **Phase 1 master-plan
+website** (React + Vite + Tailwind) plus the **backend voice pipeline**: a
+FastAPI WebSocket session (`/ws/call`) wiring **Deepgram STT → Groq LLM with
+tool calling → Sarvam Bulbul v4 Flash TTS**, with order tools, call guardrails
+and a post-call summary. The in-browser call screen is landing next.
 
 > **Testing policy:** no code or command block reaches this repository before
 > it has been executed. Every snippet below was run on Windows 11
@@ -33,7 +35,7 @@ voice pipeline (Deepgram STT → Groq LLM with tools → Sarvam TTS) lands next.
 5. [Prerequisites](#5-prerequisites)
 6. [Quick start](#6-quick-start)
 7. [Testing & CI](#7-testing--ci)
-8. [HTTP API](#8-http-api)
+8. [HTTP & WebSocket API](#8-http--websocket-api)
 9. [Client-side routing notes](#9-client-side-routing-notes)
 10. [Environment variables](#10-environment-variables)
 11. [Docker](#11-docker)
@@ -52,10 +54,11 @@ spec, test script and 4-day schedule live in
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| **1** | Interactive master-plan site + FastAPI scaffold + Docker/HF deployment layout | ✅ shipped (this repo) |
-| 2 | Voice session: WebSocket, streaming STT → LLM → TTS with tool calling | ⏳ next |
-| 3 | Tools, guardrails, call summary + owner dashboard | ⏳ |
-| 4 | Hugging Face Space launch, demo assets, final submission | ⏳ |
+| **1** | Interactive master-plan site + FastAPI scaffold + Docker/HF deployment layout | shipped |
+| **2** | Voice session: WebSocket, streaming STT → LLM → TTS with tool calling | backend shipped (`/ws/call`) |
+| **3** | Tools, guardrails, call summary | backend shipped · owner dashboard pending |
+| — | In-browser call screen (mic capture, transcripts, testing UI) | in progress |
+| **4** | Hugging Face Space launch, demo assets, final submission | pending |
 
 ## 2. Architecture
 
@@ -67,21 +70,23 @@ spec, test script and 4-day schedule live in
                      │  GET /*               → frontend/dist       │
                      │                         (index.html fallback)│
                      │                                              │
-   (Phase 2:         │  WS  /ws/call         → voice session  ⏳    │
-    voice call)      │       │                                      │
-                     │       ├─► Deepgram  (streaming STT)     ⏳    │
-                     │       ├─► Groq      (LLM + tool calls)  ⏳    │
-                     │       └─► Sarvam    (Bulbul v4 Flash TTS)⏳   │
+   (voice call)      │  WS  /ws/call         → CallSession      done  │
+                     │       │                                      │
+                     │       ├─► Deepgram  (streaming STT)      done  │
+                     │       ├─► Groq      (LLM + tool calls)   done  │
+                     │       └─► Sarvam    (Bulbul v4 Flash TTS) done  │
                      └──────────────────────────────────────────────┘
 ```
 
-* **Phase 1 (today):** FastAPI serves the single-file production build of the
+* **Static site:** FastAPI serves the single-file production build of the
   planning site. Clean routes such as `/lens` or `/requirements` deep-link
   because unknown paths fall back to `index.html` and the client router
   scrolls to the matching section (see [§9](#9-client-side-routing-notes)).
-* **Phase 2 (next):** the same process upgrades a request to a WebSocket for
+* **Voice session:** the same process upgrades a request to a WebSocket for
   duplex audio; all provider API keys stay **server-side** (see
-  [§10](#10-environment-variables)).
+  [§10](#10-environment-variables)). The session state machine, provider
+  clients, order tools and summary builder live in `backend/` and are covered
+  by the hermetic test suite (see [§7](#7-testing--ci)).
 
 ## 3. Tech stack
 
@@ -93,9 +98,11 @@ spec, test script and 4-day schedule live in
 | Animation | Framer Motion | ^14.6 | scroll reveals, marquee |
 | Icons | lucide-react | ^1.61 | icon set |
 | Language | TypeScript (strict) | 5.9.3 | type safety, CI typecheck |
-| API | FastAPI + Starlette | 0.162.0 | static serving, future voice API |
+| API | FastAPI + Starlette | 0.162.0 | static serving + `WS /ws/call` |
 | Server | Uvicorn (`[standard]`) | 0.54.0 | ASGI server |
-| Tests | pytest + FastAPI TestClient (httpx) | 9.1.1 | TDD suite |
+| Voice protocol | `websockets` | 15.0.1 | Deepgram + Sarvam WS clients |
+| LLM client | `openai` SDK (Groq base URL) | ≥1.50 | streaming chat + tool calls |
+| Tests | pytest + FastAPI TestClient (httpx) | 9.1.1 | TDD suite (hermetic + live) |
 | Runtime | Python / Node | 3.11–3.13 / 22+ | verified on both (Windows + Docker/CI) |
 | Container | Multi-stage Docker (node:22-alpine → python:3.11-slim) | — | HF Spaces deploy on port 7860 |
 
@@ -104,8 +111,24 @@ spec, test script and 4-day schedule live in
 ```
 Aria/
 ├── backend/                 # FastAPI service (server-side only)
-│   ├── main.py              #   app, /api/health, SPA catch-all
-│   └── tests/               #   TDD suite: health + SPA serving
+│   ├── main.py              #   app, /api/health, SPA fallback, WS /ws/call
+│   ├── config.py            #   sole key accessor (repr-safe Settings)
+│   ├── session.py           #   CallSession state machine (barge-in,
+│   │                        #   silence, canned lines, tools, summary)
+│   ├── stt.py               #   Deepgram streaming client + pure parser
+│   ├── llm.py               #   Groq streaming chat + tool-call assembly
+│   ├── tts.py               #   Sarvam Bulbul WS client (sentence-level)
+│   ├── splitter.py          #   stream → sentences for per-sentence TTS
+│   ├── tools.py             #   order/policy tools + JSON schemas
+│   ├── policy.py            #   returns/cancellation/COD/shipping rules
+│   ├── normalize.py         #   order-id normalization ("ord 101" → ORD-101)
+│   ├── summary.py           #   4-key post-call summary (LLM + fallback)
+│   ├── prompts.py           #   system prompt (verbatim, test-locked)
+│   ├── audio_utils.py       #   PCM16 resample/base64 helpers
+│   ├── data/orders.json     #   ORD-101..103 fixtures
+│   ├── scripts/             #   probe_sarvam (schema probe), text_harness
+│   └── tests/               #   100+ hermetic tests + live smoke tests
+│                            #   (live ones skip without .env keys)
 ├── frontend/                # React planning site (Vite + Tailwind)
 │   ├── src/
 │   │   ├── components/      #   Nav, Hero, Lens, Requirements, …
@@ -117,8 +140,8 @@ Aria/
 ├── Dockerfile               # multi-stage: Node builds, Python serves
 ├── .dockerignore            #   keeps node_modules/.env/.venv out of the image
 ├── .env.example             #   DEEPGRAM/GROQ/SARVAM key template (no values)
-├── requirements.txt         # runtime: fastapi, uvicorn[standard]
-├── requirements-dev.txt     # + pytest, httpx
+├── requirements.txt         # runtime: fastapi, uvicorn[standard], websockets, openai
+├── requirements-dev.txt     # + pytest, httpx, pytest-timeout
 ├── README.md                # this file
 └── datastraw-aria-voice-agent-plan.md   # full assignment plan
 ```
@@ -194,7 +217,7 @@ npx tsc --noEmit        # typecheck
 npm run build           # production build (dist/ must exist)
 cd ..
 pip install -r requirements-dev.txt
-python -m pytest -v     # 4 tests: health + SPA serving + fallback + API routing
+python -m pytest -v     # full suite: 100+ tests (see table below)
 ```
 
 Run the suite any time from the repo root (SPA tests auto-skip if
@@ -204,16 +227,22 @@ Run the suite any time from the repo root (SPA tests auto-skip if
 python -m pytest -v
 ```
 
-Current suite:
+Test suite layout:
 
-| Test | Asserts |
+| Module | Asserts |
 |---|---|
-| `test_health_returns_ok` | `GET /api/health` → `{"status":"ok","service":"aria"}` |
-| `test_root_serves_index_html` | `GET /` → HTML with the app mount point |
-| `test_clean_route_falls_back_to_index` | `GET /lens` → `200` HTML fallback |
-| `test_api_route_is_not_swallowed_by_catch_all` | `/api/*` stays under the catch-all |
+| `test_health` / `test_spa` / `test_orders` | liveness, static serving, SPA fallback + API routing, orders fixtures |
+| `test_config` | keys repr-safe, `missing_keys()` names-only, frozen/cached settings |
+| `test_policy` / `test_normalize` / `test_tools` | returns/COD/shipping rules, order-id normalization, tool schemas + not-found |
+| `test_prompt_verbatim` | system prompt locked verbatim |
+| `test_llm_assembly` | streaming text + fragmented tool calls → correct history (`tool_call_id`) |
+| `test_summary` | 4-key summary coercion + deterministic fallback |
+| `test_splitter` | sentence boundaries: abbreviations, prices, partial tails |
+| `test_ws_session` / `test_ws_route` / `test_ws_edges` | state machine: greeting, turns, barge-in, silence, canned lines, provider failures |
+| `test_audio_utils` / `test_stt_parse` | resample/base64, Deepgram frame parsing |
+| `test_llm_live` / `test_stt_live` / `test_tts_live` | real Groq/Deepgram/Sarvam smoke tests — **skip automatically when `.env` keys are absent (CI has none)** |
 
-## 8. HTTP API
+## 8. HTTP & WebSocket API
 
 | Method & route | Purpose |
 |---|---|
@@ -221,10 +250,39 @@ Current suite:
 | `GET /` | Serves `frontend/dist/index.html` |
 | `GET /<asset>` | Serves a real file from `frontend/dist` when it exists |
 | `GET /<unknown>` | Falls back to `index.html` (client-side clean routes) |
-| `WS /ws/call` | **Planned (Phase 2)** — duplex voice session |
+| `WS /ws/call` | Duplex voice session (see protocol below) |
 
 Path traversal is blocked: the catch-all resolves every candidate path and
 rejects anything outside `frontend/dist`.
+
+### 8.1 Voice session protocol (`WS /ws/call`)
+
+Client → server frames:
+
+| Type | Payload | Meaning |
+|---|---|---|
+| `start` | — | begin the call: STT opens, Aria greets |
+| `audio` | `data`: base64 PCM16, 16 kHz mono | mic frame → Deepgram |
+| `playback_done` | — | agent audio finished → listening |
+| `end` | — | hang up → post-call summary |
+
+Server → client frames:
+
+| Type | Payload | Meaning |
+|---|---|---|
+| `state` | `connecting / listening / thinking / speaking / ended` | session state machine |
+| `transcript` | `role`, `text`, `final` | rolling transcript (interims throttled) |
+| `audio` | `mime` (`audio/l16;rate=16000`), `data` | one synthesized agent sentence |
+| `barge_in` | — | customer interrupted the agent (turn cancelled) |
+| `tool` | `name`, `args`, `result` | order/policy tool executed |
+| `stats` | `first_audio_ms` | turn latency (first sentence audible) |
+| `summary` | `transcript`, `summary` | 4-key post-call summary (LLM, deterministic fallback) |
+| `error` | `message` | provider failure — message contains names only, never secrets |
+
+Guardrails inside the session: speech during playback triggers barge-in
+(cancel + replay from customer speech), 9 s of silence asks "still there?" once
+until the customer speaks again, low-confidence finals answer with a canned
+repeat line, and the session is one-shot (one call per connection).
 
 ## 9. Client-side routing notes
 
@@ -246,11 +304,13 @@ Copy the template once:
 Copy-Item .env.example .env
 ```
 
-| Key | Phase | Used by | Where it lives |
+| Key | Required | Used by | Where it lives |
 |---|---|---|---|
-| `DEEPGRAM_API_KEY` | 2 | streaming speech-to-text | server only |
-| `GROQ_API_KEY` | 2 | LLM with tool calling | server only |
-| `SARVAM_API_KEY` | 2 | Sarvam Bulbul v4 Flash TTS | server only |
+| `DEEPGRAM_API_KEY` | yes | streaming speech-to-text | server only |
+| `GROQ_API_KEY` | yes | LLM with tool calling | server only |
+| `SARVAM_API_KEY` | yes | Sarvam Bulbul v4 Flash TTS | server only |
+| `GROQ_MODEL` | no (default `openai/gpt-oss-20b`) | model override | server only |
+| `SARVAM_VOICE` | no (default `simran_en_customer`) | TTS persona override | server only |
 
 `.env` is git-ignored and excluded from the Docker build context. Keys must
 **never** reach the browser — on Hugging Face they go in
