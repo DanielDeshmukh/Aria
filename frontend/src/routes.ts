@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { NAV } from "./data/plan";
+import { NAV } from "./data/site";
 
 const ROUTE_PATHS = new Set(["/", ...NAV.map((n) => `/${n.id}`)]);
 

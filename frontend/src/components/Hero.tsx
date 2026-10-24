@@ -1,7 +1,8 @@
 import { motion, useScroll, useTransform } from "framer-motion";
 import { ArrowDown } from "lucide-react";
 import { useRef } from "react";
-import { HERO_STATS, TICKER } from "../data/plan";
+import { TICKER } from "../data/plan";
+import { HERO_STATS } from "../data/site";
 import { Counter, Kicker, Reveal, Waveform, useMarqueePause } from "./ui";
 
 const container = {
@@ -35,7 +36,7 @@ export default function Hero() {
           <Reveal y={16}>
             <Kicker>
               <span className="pulse-dot inline-block h-1.5 w-1.5 rounded-full bg-pop" />
-              Datastraw · AI + Tech Internship — Assignment Master Plan
+              Aura Skincare · AI voice support
             </Kicker>
           </Reveal>
 
@@ -64,8 +65,8 @@ export default function Hero() {
               className="mx-auto mt-6 max-w-xl text-balance text-[15px] leading-relaxed text-ink2 md:text-base"
             >
               A browser-based AI voice customer-support agent for{" "}
-              <span className="font-semibold text-ink">Aura Skincare</span> — cracked open,
-              planned like a product, and built to convert the internship into a hire.
+              <span className="font-semibold text-ink">Aura Skincare</span> — natural
+              conversation, live order lookups, and answers that stay inside policy.
             </motion.p>
           </div>
 
@@ -87,7 +88,7 @@ export default function Hero() {
             transition={{ delay: 1.4 }}
             className="absolute bottom-7 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 text-ink2 transition-colors hover:text-pine"
           >
-            <span className="font-mono text-[10px] uppercase tracking-[0.3em]">the plan</span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.3em]">the product</span>
             <motion.span animate={{ y: [0, 6, 0] }} transition={{ repeat: Infinity, duration: 1.8, ease: "easeInOut" }}>
               <ArrowDown size={15} />
             </motion.span>

@@ -9,7 +9,7 @@ export default function Footer() {
       <div className="overflow-hidden border-b border-white/10 py-3.5" {...marquee.marqueeProps}>
         <div ref={marquee.ref} className="marquee-slide flex w-max items-center gap-8 pr-8">
           {Array.from({ length: 2 }).flatMap((_, k) =>
-            ["public url", "github repo", "demo video", "approach note", "linkedin link", "submission email"].map((t, i) => (
+            ["voice first", "policy true", "barge-in", "indian voice · hinglish", "order lookup", "transcript + summary"].map((t, i) => (
               <span key={`${k}-${i}`} className="flex items-center gap-8 font-mono text-[11px] uppercase tracking-[0.24em] text-white/50">
                 <span className="whitespace-nowrap">{t}</span>
                 <span className="h-1 w-1 rounded-full bg-pine" />
@@ -27,11 +27,11 @@ export default function Footer() {
               <h2 className="mt-4 max-w-2xl text-balance font-display text-5xl font-medium leading-[1.02] tracking-tight md:text-7xl">
                 Finish A–E live.
                 <br />
-                Then <span className="italic text-[#a5e8cd]">get hired.</span>
+                Keep it <span className="italic text-[#a5e8cd]">fast and honest.</span>
               </h2>
               <p className="mt-5 max-w-md text-[14px] leading-relaxed text-white/60">
-                Extras are tiebreakers only. Crack the acceptance checklist on the deployed URL, keep the
-                voice fast and honest, and treat this assignment as the kickstart it is.
+                Requirements are the floor — every one answered in conversation, no promise
+                outside policy, first audio inside the latency budget.
               </p>
             </div>
             <div className="flex flex-col items-start gap-5 md:items-end">
@@ -52,10 +52,10 @@ export default function Footer() {
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-5 md:px-10">
           <span className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-white/50">
             <PhoneCall size={12} className="text-[#a5e8cd]" />
-            aria · voice agent master plan
+            aria · voice support agent
           </span>
           <span className="font-mono text-[11px] text-white/40">
-            datastraw ai + tech internship · aura skincare · oct 2026
+            aura skincare · react · fastapi
           </span>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useMemo, useState } from "react";
-import { REQUIREMENTS, SUMMARY_JSON } from "../data/plan";
+import { SUMMARY_JSON } from "../data/plan";
+import { REQUIREMENTS } from "../data/site";
 import { CheckRow, Chip, CodeBlock, Reveal, Section, SectionHead } from "./ui";
 
 const KEY_TAGS: Record<string, { label: string; tone: "pine" | "pop" | "warm" }> = {
@@ -14,7 +15,7 @@ const KEY_TAGS: Record<string, { label: string; tone: "pine" | "pop" | "warm" }>
   tool: { label: "one tool, done well", tone: "pine" },
   json: { label: "structured output", tone: "pine" },
   state: { label: "visible state", tone: "pine" },
-  transcript: { label: "your addition", tone: "warm" },
+  transcript: { label: "live view", tone: "warm" },
 };
 
 export default function Requirements() {
@@ -29,7 +30,7 @@ export default function Requirements() {
     <Section id="requirements" className="py-24 md:py-32">
       <SectionHead
         no="02"
-        kicker="acceptance checklist · pdf section 2"
+        kicker="product spec · core requirements"
         title={
           <>
             Core requirements,
@@ -37,7 +38,7 @@ export default function Requirements() {
             A <span className="font-display text-pine">→</span> E
           </>
         }
-        desc="Use it as the acceptance net — tick every box on the deployed URL, not just locally. Click items to rehearse the final checklist."
+        desc="The contract for every call. Tick each line end-to-end on the deployed build — clicking here rehearses the acceptance pass."
         right={
           <div className="hidden items-center gap-3 font-mono text-[11px] text-ink2 md:flex">
             <span className="tabular">
@@ -129,7 +130,7 @@ export default function Requirements() {
 
               {active === "D" && (
                 <div className="mt-4">
-                  <CodeBlock title="post-call-summary.json — example shape (from the PDF)" code={SUMMARY_JSON} />
+                  <CodeBlock title="post-call-summary.json — example shape" code={SUMMARY_JSON} />
                 </div>
               )}
             </motion.div>

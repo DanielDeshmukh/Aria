@@ -15,7 +15,7 @@ export default function Policies() {
     <Section id="data" className="py-24 md:py-32">
       <SectionHead
         no="04"
-        kicker="mock data & policies · from the PDF"
+        kicker="brand knowledge · ground truth"
         title={
           <>
             The ground truth —
@@ -97,7 +97,7 @@ export default function Policies() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
             <div>
               <h3 className="font-display text-xl font-medium tracking-tight text-ink">Mock order database</h3>
-              <p className="font-mono text-[11px] text-ink2">also ships as the on-page Test Orders Helper (Requirement E)</p>
+              <p className="font-mono text-[11px] text-ink2">the same data as the on-page Test Orders Helper</p>
             </div>
             <Chip tone="pine">3 orders · full details</Chip>
           </div>

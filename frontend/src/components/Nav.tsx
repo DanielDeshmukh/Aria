@@ -2,7 +2,7 @@ import { motion, useScroll, useSpring } from "framer-motion";
 import { Moon, PhoneCall, Sun } from "lucide-react";
 import { useState } from "react";
 import { flushSync } from "react-dom";
-import { NAV } from "../data/plan";
+import { NAV } from "../data/site";
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() =>
@@ -99,7 +99,7 @@ export default function Nav() {
               <PhoneCall size={13} strokeWidth={2.4} />
             </span>
             <span className="whitespace-nowrap font-mono text-[12px] font-medium uppercase tracking-[0.22em] text-ink">
-              Aria <span className="text-ink2">/ master plan</span>
+              Aria <span className="text-ink2">/ voice agent</span>
             </span>
           </a>
 

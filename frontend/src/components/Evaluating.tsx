@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { ArrowUpRight } from "lucide-react";
-import { LENS, LENS_QUOTE } from "../data/plan";
+import { LENS_QUOTE } from "../data/plan";
+import { LENS } from "../data/site";
 import { Reveal, Section, SectionHead } from "./ui";
 
 export default function Evaluating() {
@@ -8,15 +9,15 @@ export default function Evaluating() {
     <Section id="lens" className="py-24 md:py-32">
       <SectionHead
         no="01"
-        kicker="the evaluation lens"
+        kicker="design principles"
         title={
           <>
-            What Datastraw is
+            What this product
             <br />
-            <span className="italic text-pine">really</span> scoring
+            <span className="italic text-pine">lives</span> or dies on
           </>
         }
-        desc="Four things. Not features, not polish for its own sake. Every decision in this plan exists to win one of them — and the demo only needs to prove each one once, cleanly."
+        desc="Four things. Not features, not polish for its own sake. Every decision in this build serves one of them — each only needs to prove itself once, cleanly, in a real conversation."
       />
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -54,7 +55,7 @@ export default function Evaluating() {
             {LENS_QUOTE}
           </blockquote>
           <figcaption className="mt-6 font-mono text-[11px] uppercase tracking-[0.3em] text-ink2">
-            — the assignment brief, verbatim
+            — how we scope features
           </figcaption>
         </figure>
       </Reveal>

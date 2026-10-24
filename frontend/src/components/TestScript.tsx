@@ -18,8 +18,8 @@ export default function TestScript() {
   return (
     <Section id="tests" className="py-24 md:py-32">
       <SectionHead
-        no="08"
-        kicker="test script = demo script"
+        no="07"
+        kicker="acceptance script"
         title={
           <>
             Say this.
@@ -27,8 +27,8 @@ export default function TestScript() {
             Expect <span className="italic text-pine">that.</span>
           </>
         }
-        desc="Fourteen scenarios that double as the demo-video script. Run every single one on the deployed URL — not just locally."
-        right={<Chip tone="pop" className="hidden md:inline-flex">run on the live URL</Chip>}
+        desc="Fourteen scenarios that double as the walkthrough script. Run every one end-to-end on the deployed build."
+        right={<Chip tone="pop" className="hidden md:inline-flex">run end-to-end</Chip>}
       />
 
       <div className="grid gap-3 md:grid-cols-2">

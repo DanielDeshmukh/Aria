@@ -12,7 +12,8 @@ import {
   Split,
   Wrench,
 } from "lucide-react";
-import { DECISIONS, DEPLOY_POINTS, HF_FRONTMATTER, SARVAM_NOTES, STACK } from "../data/plan";
+import { HF_FRONTMATTER, SARVAM_NOTES } from "../data/plan";
+import { DECISIONS, DEPLOY_POINTS, STACK } from "../data/site";
 import { Chip, CodeBlock, Kicker, Reveal, Section, SectionHead } from "./ui";
 
 /* travelling pulse along a connector */
@@ -173,7 +174,7 @@ export default function Architecture() {
   return (
     <Section id="architecture" className="py-24 md:py-32">
       <SectionHead
-        no="05"
+        no="04"
         kicker="stack & pipeline"
         title={
           <>

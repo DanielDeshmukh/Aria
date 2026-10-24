@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
 import { ChevronRight, CircleSlash, MousePointerClick, Repeat2, ShieldCheck, Timer, Workflow } from "lucide-react";
 import { useEffect, useState } from "react";
-import { BARGE_IN, DB_FIELDS, DERIVED_FLAGS, EDGE_CASES, LATENCY, NORMALIZATION, TOOLS } from "../data/plan";
+import { BARGE_IN, DB_FIELDS, DERIVED_FLAGS, EDGE_CASES, LATENCY, TOOLS } from "../data/plan";
+import { NORMALIZATION } from "../data/site";
 import { Chip, Kicker, Reveal, Section, SectionHead, Waveform } from "./ui";
 import { cn } from "../utils/cn";
 
@@ -141,7 +142,7 @@ export default function ToolsBehavior() {
       {/* 06 · tools & policy engine */}
       <Section id="tools" className="py-24 md:py-32">
         <SectionHead
-          no="06"
+          no="05"
           kicker="tools & policy engine"
           title={
             <>
@@ -213,7 +214,7 @@ export default function ToolsBehavior() {
                 </span>
                 <h3 className="font-display text-xl font-medium tracking-tight">Order-ID normalization <span className="text-pop">(critical)</span></h3>
               </div>
-              <Chip tone="pop">most likely to break in a live demo</Chip>
+              <Chip tone="pop">most likely to break in a live call</Chip>
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-2 font-mono text-[12px]">
@@ -238,7 +239,7 @@ export default function ToolsBehavior() {
       {/* 07 · call behaviour */}
       <Section id="behaviour" className="border-t border-line py-24 md:py-32">
         <SectionHead
-          no="07"
+          no="06"
           kicker="call behaviour & edge cases"
           title={
             <>

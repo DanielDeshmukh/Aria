@@ -1,6 +1,5 @@
 import Appendix from "./components/Appendix";
 import Architecture from "./components/Architecture";
-import Deliverables from "./components/Deliverables";
 import Evaluating from "./components/Evaluating";
 import Footer from "./components/Footer";
 import Hero from "./components/Hero";
@@ -28,7 +27,6 @@ export default function App() {
         <Hero />
         <Evaluating />
         <div className="border-t border-line"><Requirements /></div>
-        <div className="border-t border-line"><Deliverables /></div>
         <div className="border-t border-line"><Policies /></div>
         <div className="border-t border-line"><Architecture /></div>
         <ToolsBehavior />

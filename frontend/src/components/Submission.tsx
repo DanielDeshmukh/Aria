@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
 import { Clapperboard, Headphones, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
-import { DEMO_PLAN, DEMO_TIPS, PRESUBMIT } from "../data/plan";
+import { DEMO_PLAN, DEMO_TIPS } from "../data/plan";
+import { LAUNCH_CHECKLIST } from "../data/site";
 import { CheckRow, Chip, Reveal, Section, SectionHead } from "./ui";
 import { cn } from "../utils/cn";
 
@@ -39,13 +40,13 @@ function DemoTimeline() {
   );
 }
 
-/* ---------------- pre-submit checklist ---------------- */
+/* ---------------- launch checklist ---------------- */
 function PreSubmit() {
   const [checks, setChecks] = useState<Record<number, boolean>>({});
   const done = useMemo(() => Object.values(checks).filter(Boolean).length, [checks]);
   const R = 46;
   const C = 2 * Math.PI * R;
-  const all = done === PRESUBMIT.length;
+  const all = done === LAUNCH_CHECKLIST.length;
 
   return (
     <div className="grid gap-8 lg:grid-cols-[300px_1fr]">
@@ -59,28 +60,28 @@ function PreSubmit() {
                 stroke={all ? "var(--color-pine)" : "var(--color-pop)"}
                 strokeWidth="7" strokeLinecap="round"
                 strokeDasharray={C}
-                animate={{ strokeDashoffset: C - (done / PRESUBMIT.length) * C }}
+                animate={{ strokeDashoffset: C - (done / LAUNCH_CHECKLIST.length) * C }}
                 transition={{ type: "spring", stiffness: 60, damping: 16 }}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <span className="font-display text-3xl font-semibold tabular text-ink">
-                {Math.round((done / PRESUBMIT.length) * 100)}%
+                {Math.round((done / LAUNCH_CHECKLIST.length) * 100)}%
               </span>
-              <span className="font-mono text-[9.5px] uppercase tracking-[0.2em] text-ink2">{done}/{PRESUBMIT.length} cleared</span>
+              <span className="font-mono text-[9.5px] uppercase tracking-[0.2em] text-ink2">{done}/{LAUNCH_CHECKLIST.length} cleared</span>
             </div>
           </div>
           <p className={cn("mt-5 font-mono text-[11px] uppercase tracking-[0.22em]", all ? "text-pine" : "text-ink2")}>
-            {all ? "go — send the email" : "clear every line"}
+            {all ? "ready to ship" : "clear every line"}
           </p>
           <p className="mt-2 text-[12px] leading-relaxed text-ink2">
-            Wake the Space right before submitting, and again around when evaluators are likely to test.
+            Wake the Space before a demo window — free Spaces sleep after 48h idle.
           </p>
         </div>
       </Reveal>
 
       <div className="flex flex-col gap-2">
-        {PRESUBMIT.map((p, i) => (
+        {LAUNCH_CHECKLIST.map((p, i) => (
           <CheckRow key={i} index={i} checked={!!checks[i]} onToggle={() => setChecks((c) => ({ ...c, [i]: !c[i] }))}>
             {p}
           </CheckRow>
@@ -96,8 +97,8 @@ export default function Submission() {
       {/* 11 · demo video */}
       <Section id="submission" className="border-t border-line py-24 md:py-32">
         <SectionHead
-          no="11"
-          kicker="the 3–5 minute demo video"
+          no="09"
+          kicker="the product walkthrough"
           title={
             <>
               Four minutes,
@@ -124,7 +125,7 @@ export default function Submission() {
                   <h3 className="font-display text-lg font-medium tracking-tight">Headphones on</h3>
                 </div>
                 <p className="mt-3 text-[13px] leading-relaxed text-ink2">
-                  Both for you while recording and for the evaluators testing the live URL. It keeps echo out of the barge-in path.
+                  Both for you while recording and for anyone testing the live URL. It keeps echo out of the barge-in path.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -140,13 +141,13 @@ export default function Submission() {
       {/* 12 · pre-submit checklist */}
       <Section id="checklist" className="border-t border-line py-24 md:py-32">
         <SectionHead
-          no="12"
-          kicker="the pre-submit checklist"
+          no="10"
+          kicker="the launch checklist"
           title={
             <>
               Ten lines between
               <br />
-              you and <span className="italic text-pine">send</span>
+              you and <span className="italic text-pine">ship</span>
             </>
           }
           desc="The final gate. Test on a different device and network, with the Space awake and credits to spare."
