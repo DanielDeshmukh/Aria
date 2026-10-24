@@ -1,16 +1,41 @@
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+
+from .session import CallSession
+from .llm import GroqLLM
+from .stt import DeepgramSTT
+from .tts import SarvamTTS
 
 app = FastAPI(title="Aria Voice Agent", version="0.1.0")
 
 DIST: Path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
+def session_factory(send) -> CallSession:
+    """Wired providers for /ws/call. Tests monkeypatch this module attribute."""
+    return CallSession(stt=DeepgramSTT(), llm=GroqLLM(), tts=SarvamTTS(), send=send)
+
+
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "aria"}
+
+
+@app.websocket("/ws/call")
+async def ws_call(websocket: WebSocket) -> None:
+    await websocket.accept()
+    session = session_factory(websocket.send_json)
+    try:
+        while True:
+            await session.handle(await websocket.receive_json())
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        await session.close()
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
