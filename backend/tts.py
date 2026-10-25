@@ -23,7 +23,7 @@ import asyncio
 import base64
 import contextlib
 import json
-from typing import Any
+from typing import Any, AsyncIterator
 
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -100,6 +100,73 @@ class SarvamTTS:
         if not out:
             raise RuntimeError("SarvamTTS: no audio returned")
         return bytes(out)
+
+    async def synth_stream(self, text: str) -> AsyncIterator[bytes]:
+        """Yield PCM chunks as Sarvam produces them, so the first audio can
+        reach the client before the whole sentence has synthesized.
+
+        Retry mirrors synth(): one reconnect, but only before any chunk has
+        been yielded — replaying after a partial send would corrupt audio.
+        """
+        text = text.strip()
+        if not text:
+            return
+        sent_any = False
+        for attempt in (1, 2):
+            try:
+                async for chunk in self._stream(text):
+                    sent_any = True
+                    yield chunk
+                return
+            except asyncio.CancelledError:
+                # barge-in: drop the socket so stale frames cannot bleed
+                # into the next utterance (same contract as synth()).
+                await self._drop()
+                raise
+            except (ConnectionClosed, OSError) as exc:
+                await self._drop()
+                if sent_any:
+                    raise RuntimeError(
+                        f"{type(exc).__name__}: Sarvam TTS connection failed mid-stream"
+                    ) from exc
+                if attempt == 2:
+                    raise RuntimeError(
+                        f"{type(exc).__name__}: Sarvam TTS connection failed twice"
+                    ) from exc
+        raise RuntimeError("unreachable")
+
+    async def _stream(self, text: str) -> AsyncIterator[bytes]:
+        if self._ws is None:
+            await self._connect()
+        assert self._ws is not None
+        produced = 0
+        for piece in _chunk_text(text, MAX_TEXT_CHARS):
+            await self._ws.send(json.dumps({"type": "text", "data": {"text": piece}}))
+            await self._ws.send(json.dumps({"type": "flush"}))
+            async for chunk in self._collect_stream():
+                produced += len(chunk)
+                yield chunk
+        if not produced:
+            raise RuntimeError("SarvamTTS: no audio returned")
+
+    async def _collect_stream(self) -> AsyncIterator[bytes]:
+        """Yield each audio frame until the final event or the idle gap."""
+        assert self._ws is not None
+        while True:
+            try:
+                raw = await asyncio.wait_for(
+                    self._ws.recv(), timeout=IDLE_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                break  # idle gap = utterance complete (docs pattern)
+            if not isinstance(raw, str):
+                continue
+            msg = json.loads(raw)
+            kind = msg.get("type")
+            if kind == "audio":
+                yield base64.b64decode(msg["data"]["audio"])
+            elif kind == "event" and msg.get("data", {}).get("event_type") == "final":
+                break
 
     async def _connect(self) -> None:
         key = get_settings().sarvam_api_key

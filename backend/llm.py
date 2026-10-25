@@ -112,7 +112,7 @@ class GroqLLM:
                 "stream": True,
                 "temperature": 0.3,
                 "max_completion_tokens": 400,
-                "reasoning_effort": "low",  # gpt-oss reasons by default; voice needs speed
+                "reasoning_effort": "low",  # reasoning models think by default; voice needs speed
             }
             if tools:
                 kwargs["tools"] = tools

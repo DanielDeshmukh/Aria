@@ -281,22 +281,38 @@ class CallSession:
             {"type": "transcript", "role": "agent", "text": text, "final": True}
         )
         try:
-            audio = await self.tts.synth(text)
+            stream = getattr(self.tts, "synth_stream", None)
+            if stream is not None:
+                # Streaming path: forward each PCM chunk as it arrives so the
+                # first audio leaves before the sentence finished synthesizing.
+                async for chunk in stream(text):
+                    if not await self._emit_audio(chunk):
+                        return
+            else:
+                audio = await self.tts.synth(text)
+                if self._ended or self._closing:
+                    return
+                await self._emit_audio(audio)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             await self._fail(f"text-to-speech unavailable: {type(e).__name__}")
             return
+
+    async def _emit_audio(self, chunk: bytes) -> bool:
+        """Send one PCM chunk; stats/state ride on the first one.
+        Returns False when the session ended and sending must stop."""
         if self._ended or self._closing:
-            return
+            return False
         if not self._stats_sent:
             self._stats_sent = True
             await self._send_stats()
         if self.state != "speaking":
             await self._set_state("speaking")
         await self.send(
-            {"type": "audio", "mime": self.tts.mime, "data": _b64(audio)}
+            {"type": "audio", "mime": self.tts.mime, "data": _b64(chunk)}
         )
+        return True
 
     # ----------------------------------------------------------------- helpers
     async def _send_stats(self) -> None:
