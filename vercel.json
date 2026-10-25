@@ -6,7 +6,7 @@
   "functions": {
     "main.py": {
       "maxDuration": 300,
-      "excludeFiles": "{backend/tests/**,backend/scripts/**,docs/**,.playwright-mcp/**,**/__pycache__/**,**/*.log,*.pdf,pdf_extract.txt,datastraw-aria-voice-agent-plan.md,start-demo.ps1,start-demo.bat,Dockerfile,.dockerignore}"
+      "excludeFiles": "{backend/tests/**,backend/scripts/**,docs/**,.playwright-mcp/**,**/__pycache__/**,**/*.log,*.pdf,pdf_extract.txt,start-demo.ps1,start-demo.bat,Dockerfile,.dockerignore}"
     }
   }
 }

@@ -9,7 +9,6 @@ docs
 *.log
 *.pdf
 pdf_extract.txt
-datastraw-aria-voice-agent-plan.md
 start-demo.ps1
 start-demo.bat
 Dockerfile

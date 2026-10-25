@@ -349,7 +349,8 @@ Browser-based AI voice customer-support agent for the Datastraw AI + Tech
 internship assignment. This repository currently ships the **master-plan
 website** (React + Vite + Tailwind) behind a **FastAPI** server; the voice
 pipeline (STT → LLM → TTS) lands next — roadmap:
-[`datastraw-aria-voice-agent-plan.md`](./datastraw-aria-voice-agent-plan.md).
+`datastraw-aria-voice-agent-plan.md` (internal plan document, removed at
+submission; the requirements now live in the README).
 
 ## Repository structure
 
@@ -423,8 +424,9 @@ docker run -p 7860:7860 aria-voice-agent   # http://localhost:7860
 
 ## Roadmap
 
-Requirements, architecture, the 4-day schedule and the full test script live
-in [`datastraw-aria-voice-agent-plan.md`](./datastraw-aria-voice-agent-plan.md).
+Requirements, architecture, the 4-day schedule and the full test script lived
+in `datastraw-aria-voice-agent-plan.md` (internal plan document, removed at
+submission).
 ````
 
 - [ ] **Step 3: Verify**
