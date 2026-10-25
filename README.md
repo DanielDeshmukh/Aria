@@ -82,19 +82,20 @@ spec, test script and 4-day schedule live in
 ## 2. Architecture
 
 ```
-                     ┌──────────────────────────────────────────────┐
-  browser  ────────► │  FastAPI (uvicorn, port 7860)                │
-   (Phase 1:         │                                              │
-    static site)     │  GET /api/health      → liveness probe       │
-                     │  GET /*               → frontend/dist       │
-                     │                         (index.html fallback)│
-                     │                                              │
-   (voice call)      │  WS  /ws/call         → CallSession      done  │
-                     │       │                                      │
-                     │       ├─► Deepgram  (streaming STT)      done  │
-                     │       ├─► Groq      (LLM + tool calls)   done  │
-                     │       └─► Sarvam    (Bulbul v4 Flash TTS) done  │
-                     └──────────────────────────────────────────────┘
+  browser
+  │
+  │                               ┌──────────────────────────────────────────────────────┐
+  │  static site (HTML + JS)      │  FastAPI  (uvicorn)  ·  :8000 dev, :7860 container   │
+  ├──────────────────────────────►│  GET  /api/health          →  liveness probe         │
+  │                               │  GET  /*                   →  frontend/dist          │
+  │                               │                               (index.html fallback)  │
+  │  voice call (WS duplex)       │                                                      │
+  ├──────────────────────────────►│  WS   /ws/call             →  CallSession            │
+  │                               │  │                                                   │
+  │                               │  ├─►  Deepgram                streaming STT          │
+  │                               │  ├─►  Groq                    LLM + tool calls       │
+  │                               │  └─►  Sarvam                  Bulbul v4 Flash TTS    │
+  └                               └──────────────────────────────────────────────────────┘
 ```
 
 * **Static site:** FastAPI serves the single-file production build of the
