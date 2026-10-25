@@ -1,9 +1,13 @@
 import { useEffect } from "react";
 import { NAV } from "./data/site";
 
-const ROUTE_PATHS = new Set(["/", ...NAV.map((n) => `/${n.id}`)]);
-
 const normalize = (path: string) => path.replace(/\/+$/, "") || "/";
+
+/** Standalone views — native navigation only, never intercepted. */
+const VIEW_ROUTES = new Set(["/call"]);
+
+/** Landing sections addressable as clean paths (same-page smooth scroll). */
+const SCROLL_PATHS = new Set(["/", ...NAV.map((n) => `/${n.id}`)]);
 
 /** Clean path ("/pipeline") → section id ("pipeline"); "/" and unknown → null (home). */
 export function pathToSectionId(pathname: string): string | null {
@@ -14,28 +18,30 @@ export function pathToSectionId(pathname: string): string | null {
 }
 
 /**
- * Same-page clean routing: nav links use /pipeline instead of /#pipeline,
- * hash targets like #call scroll in place, and the site stays one
- * continuous scroll. Handles click interception, history push,
- * back/forward, and deep-link scroll on load.
+ * Clean-path routing: every section lives at a plain path (/call, /pipeline),
+ * clicking one pushes the URL and scrolls in place (one continuous scroll);
+ * view routes like /call navigate natively. Handles click interception,
+ * history push, back/forward, and deep-link scroll on load. No hash URLs.
  */
 export function useRouteScroll() {
   useEffect(() => {
-    const scrollToPath = (instant: boolean, hash?: string) => {
+    const scrollToPath = (instant: boolean) => {
       const behavior: ScrollBehavior = instant ? "instant" : "smooth";
-      // explicit hash target (#call) wins; otherwise resolve the path's section
-      const hashId = hash && hash.length > 1 ? hash.slice(1) : null;
-      const id = hashId ?? pathToSectionId(window.location.pathname);
+      const id = pathToSectionId(window.location.pathname);
       const el = id ? document.getElementById(id) : null;
       if (el) el.scrollIntoView({ behavior, block: "start" });
       else window.scrollTo({ top: 0, behavior });
     };
 
-    // legacy bookmarks like /#lens → clean /lens; /#call keeps its hash
+    // legacy bookmarks: /#call → native /call; /#pipeline → clean /pipeline
     if (window.location.hash) {
       const id = window.location.hash.slice(1);
       const known = NAV.some((n) => n.id === id);
-      history.replaceState({}, "", known ? `/${id}` : `/${""}${window.location.hash}`);
+      if (known && VIEW_ROUTES.has(`/${id}`)) {
+        window.location.replace(`/${id}`);
+        return;
+      }
+      history.replaceState({}, "", known ? `/${id}` : `/${window.location.hash}`);
     }
 
     // deep link: jump straight to the section once layout settles
@@ -48,7 +54,7 @@ export function useRouteScroll() {
     INTERACT.forEach((t) => window.addEventListener(t, markInteracted, { passive: true }));
 
     const jump = () => {
-      if (!interacted) scrollToPath(true, window.location.hash);
+      if (!interacted) scrollToPath(true);
     };
     requestAnimationFrame(() => requestAnimationFrame(jump));
     window.addEventListener("load", jump, { once: true });
@@ -67,15 +73,17 @@ export function useRouteScroll() {
         return;
       }
       if (url.origin !== window.location.origin) return;
-      if (!ROUTE_PATHS.has(normalize(url.pathname))) return;
+      const path = normalize(url.pathname);
+      if (VIEW_ROUTES.has(path)) return; // standalone view: let the browser navigate
+      if (!SCROLL_PATHS.has(path)) return;
       e.preventDefault();
-      if (normalize(url.pathname) !== normalize(window.location.pathname)) {
-        history.pushState({}, "", normalize(url.pathname) + (url.hash || ""));
+      if (path !== normalize(window.location.pathname)) {
+        history.pushState({}, "", path);
       }
-      scrollToPath(false, url.hash);
+      scrollToPath(false);
     };
 
-    const onPopState = () => scrollToPath(false, window.location.hash);
+    const onPopState = () => scrollToPath(false);
 
     document.addEventListener("click", onClick);
     window.addEventListener("popstate", onPopState);

@@ -5,9 +5,12 @@
 /*  only product framing copy lives here.                              */
 /* ------------------------------------------------------------------ */
 
-/* ---------------- navigation (ids stable, labels product-facing) ---------------- */
+/* ---------------- navigation (landing sections in page order, ids = clean paths) ---------------- */
 
-export const NAV = [{ id: "pipeline", label: "How it works" }];
+export const NAV = [
+  { id: "call", label: "Live call" },
+  { id: "pipeline", label: "How it works" },
+];
 
 /* ---------------- hero stats ---------------- */
 

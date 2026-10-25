@@ -312,21 +312,24 @@ connection). When the client goes quiet, the server feeds Deepgram its own
 
 ## 9. Client-side routing notes
 
-* `frontend/src/routes.ts` owns navigation: clicks are intercepted and pushed
-  via `history.pushState`, then the target section is scrolled smoothly with
+* `frontend/src/routes.ts` owns navigation: every section is a clean path —
+  the nav lists **Live call** (`/call`) and **How it works** (`/pipeline`) —
+  and scroll-route clicks are intercepted and pushed via
+  `history.pushState`, then the target section is scrolled smoothly with
   `scroll-margin-top: 86px` so section headings clear the sticky nav.
-* The page has two targets: `#call` (the embedded live call) and
-  `/pipeline` (how it works). The hero's Start Call CTA and scroll cue
-  smooth-scroll to `#call`; the interceptor is hash-aware, so `#call` works
-  from anywhere, including while sitting on `/pipeline`.
-* Deep links (`/pipeline`, `/#call`) are re-applied on load — after fonts and
-  layout settle — unless the user has already scrolled (their scroll wins).
+* No hash URLs anywhere. The hero's Start Call CTA is a plain `/call` link
+  (native navigation — the standalone call view); the scroll cue is a
+  hashless button that smooth-scrolls to the embedded section without
+  touching the URL.
+* `/call` is a *view* route: it is never intercepted, so a click or a cold
+  reload always loads the full-page app, whose plain `href="/"` back link
+  returns to the site (the hook is not mounted there). Legacy `/#call`
+  bookmarks redirect there via `location.replace`.
+* Deep links (`/pipeline`, legacy `/#pipeline`) are re-applied on load —
+  after fonts and layout settle — unless the user has already scrolled
+  (their scroll wins).
 * Because FastAPI unknown-paths fall back to `index.html`, these URLs work on
   a cold reload and in production, not just in the Vite dev server.
-* The standalone `/call` route remains for direct links (README, smoke
-  tests): it is not in the scroll router's section list, so a native
-  navigation loads the full-page app, whose plain `href="/"` back link
-  returns to the site (the hook is not mounted there).
 * Headphones are recommended for the call (embedded or `/call`): barge-in is
   server-driven only (the mic is never muted client-side), so loud speaker
   output can re-trigger it.
