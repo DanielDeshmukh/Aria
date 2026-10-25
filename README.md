@@ -396,7 +396,7 @@ Copy-Item .env.example .env
 | `DEEPGRAM_API_KEY` | yes | streaming speech-to-text | server only |
 | `GROQ_API_KEY` | yes | LLM with tool calling | server only |
 | `SARVAM_API_KEY` | yes | Sarvam Bulbul v4 Flash TTS | server only |
-| `GROQ_MODEL` | no (default `openai/gpt-oss-20b`) | model override | server only |
+| `GROQ_MODEL` | no (default `qwen/qwen3.8-27b`) | model override | server only |
 | `SARVAM_VOICE` | no (default `simran_en_customer`) | TTS persona override | server only |
 
 `.env` is git-ignored, excluded from the Docker build context and listed in

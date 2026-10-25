@@ -19,15 +19,15 @@ export const HERO_STATS = [
   { value: 4, suffix: "", label: "days to build", note: "Day 4 is buffer" },
   { value: 6, suffix: "", label: "hard deliverables", note: "all non-negotiable" },
   { value: 14, suffix: "", label: "test scenarios", note: "run on the live URL" },
-  { value: 1.5, suffix: "s", decimals: 1, prefix: "<", label: "latency budget", note: "end of speech → first audio" },
+  { value: 2, suffix: "s", decimals: 0, prefix: "~", label: "reply latency", note: "end of speech → first audio" },
 ];
 
 export const TICKER = [
   "Deepgram STT",
-  "Groq · gpt-oss-20b",
+  "Groq · qwen3.8-27b",
   "Sarvam Bulbul v4 Flash",
   "FastAPI WebSockets",
-  "HF Spaces · Docker SDK",
+  "Vercel",
   "ORD-101",
   "ORD-102",
   "ORD-103",
@@ -276,13 +276,13 @@ export const STACK = [
     choice: "Deepgram streaming (default)",
     why: "Low latency, endpointing built in. Test Sarvam STT as a swap on Day 2 if Hinglish or accent accuracy is weak.",
   },
-  { layer: "LLM", choice: "Groq — gpt-oss-20b · Gemini Flash fallback", why: "Fast first token, tool calling." },
+  { layer: "LLM", choice: "Groq — qwen3.8-27b", why: "Fast first token and the most stable tool-calling loop of the Groq models benchmarked." },
   { layer: "TTS", choice: "Sarvam Bulbul v4 Flash (bulbul:v4-flash)", why: "Indian voices, Hinglish, sub-250ms time-to-first-audio." },
-  { layer: "Hosting", choice: "One Docker container — API + built frontend", why: "One URL, one origin, no CORS, wss just works." },
+  { layer: "Hosting", choice: "Vercel — FastAPI service + static frontend", why: "One URL and one origin through service rewrites, no CORS, wss verified live." },
   {
     layer: "Platform",
-    choice: "Hugging Face Spaces — Docker SDK",
-    why: "Free, no card, WebSockets verified working, sleeps only after 48h idle. Explicitly allowed in the PDF (Section 7).",
+    choice: "Vercel Hobby — free tier",
+    why: "No card, Python 3.13, WebSockets supported. The PDF allows HF Spaces (the original plan); shipping moved to Vercel.",
   },
 ];
 
@@ -305,7 +305,7 @@ export const DECISIONS = [
   {
     n: "04",
     title: "Sentence-level streaming",
-    body: "Stream LLM tokens, split at sentence boundaries, and push each sentence to TTS immediately — this is where the latency is won.",
+    body: "Stream LLM tokens, split at sentence boundaries, and push each sentence to TTS immediately — the PCM then travels chunk by chunk to the browser instead of one buffered blob, so the wait ends at the first chunk.",
   },
 ];
 
