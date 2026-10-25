@@ -1,0 +1,16 @@
+# Never uploaded to Vercel: secrets first, then local-only clutter.
+.env
+.venv
+**/__pycache__
+.pytest_cache
+**/node_modules
+.playwright-mcp
+docs
+*.log
+*.pdf
+pdf_extract.txt
+datastraw-aria-voice-agent-plan.md
+start-demo.ps1
+start-demo.bat
+Dockerfile
+.dockerignore

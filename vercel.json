@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "fluid": true,
+  "regions": ["bom1"],
+  "buildCommand": "cd frontend && npm ci && npm run build",
+  "functions": {
+    "main.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{backend/tests/**,backend/scripts/**,docs/**,.playwright-mcp/**,**/__pycache__/**,**/*.log,*.pdf,pdf_extract.txt,datastraw-aria-voice-agent-plan.md,start-demo.ps1,start-demo.bat,Dockerfile,.dockerignore}"
+    }
+  }
+}

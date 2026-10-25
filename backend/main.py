@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 
 from .session import CallSession
 from .llm import GroqLLM
+from .selftest import run_selftest
 from .stt import DeepgramSTT
 from .tts import SarvamTTS
 
@@ -21,6 +22,14 @@ def session_factory(send) -> CallSession:
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "aria"}
+
+
+@app.get("/api/ws-selftest")
+async def ws_selftest() -> dict:
+    """Post-deploy reachability probe: outbound WebSocket to Deepgram, WS to
+    Sarvam, HTTPS to Groq from inside the function. Returns ok/detail/latency
+    names only — never keys or tokens."""
+    return await run_selftest()
 
 
 @app.websocket("/ws/call")
@@ -52,3 +61,10 @@ async def spa(full_path: str) -> FileResponse:
     if not index.is_file():
         raise HTTPException(503, "Frontend not built — run: cd frontend && npm run build")
     return FileResponse(index, media_type="text/html")
+
+
+# Static-file directory for Vercel's FastAPI build: files under frontend/dist
+# are promoted to the CDN at build time (app.frontend checks path operations
+# first, so the catch-all above keeps serving locally, unchanged). check_dir
+# stays False so a fresh clone without `dist/` still imports cleanly in tests.
+app.frontend("/", directory="frontend/dist", check_dir=False)

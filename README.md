@@ -426,6 +426,11 @@ full §16 runbook (14/14 on the public URL).
 The Docker image (§11) is the same artifact: run it on `:7860` and point the
 tunnel at that port instead of `localhost:8000`.
 
+**Known limitation:** on Vercel (Hobby plan) every function — and therefore
+every WebSocket call — is capped at **5 minutes**. Aria warns you ~30 s before
+the cap and then ends the call gracefully with the summary while the socket is
+still alive; locally (`uvicorn`/Docker) calls have no time limit.
+
 ## 13. Troubleshooting
 
 | Symptom | Cause | Fix |

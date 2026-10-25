@@ -14,7 +14,7 @@ import { useVoiceSession } from "./useVoiceSession";
  */
 export default function CallPanel() {
   const session = useVoiceSession();
-  const { state, stats, error, transcript, summary, tools } = session;
+  const { state, stats, error, notice, transcript, summary, tools } = session;
 
   return (
     <div>
@@ -37,6 +37,12 @@ export default function CallPanel() {
               settings, then retry.
             </p>
           )}
+        </div>
+      )}
+
+      {notice && !error && (
+        <div className="mb-5 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] text-ink2">
+          {notice}
         </div>
       )}
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import os
 import time
 from typing import Any, Awaitable, Callable
 
@@ -25,6 +26,10 @@ STILL_THERE = "Are you still there? I'm happy to help if you need anything."
 SILENCE_SECONDS = 9.0
 LOW_CONFIDENCE = 0.55
 INTERIM_MIN_INTERVAL = 0.2
+# Vercel Functions (Hobby) kill WebSockets at maxDuration = 300 s: warn the
+# client at 270 s, finish gracefully (summary + ended) at 295 s.
+CALL_ENDING_SOON_SECONDS = 270.0
+CALL_FORCE_END_SECONDS = 295.0
 
 
 def _b64(data: bytes) -> str:
@@ -49,6 +54,8 @@ class CallSession:
         self._stats_sent = False
         self._last_interim_at = 0.0
         self._still_there_sent = False
+        self._warn_handle: asyncio.TimerHandle | None = None
+        self._end_handle: asyncio.TimerHandle | None = None
 
     # ------------------------------------------------------------------ wire
     async def handle(self, msg: Any) -> None:
@@ -69,6 +76,7 @@ class CallSession:
         if self._closing:
             return
         self._closing = True
+        self._cancel_call_deadlines()
         await self._cancel_turn()
         self._cancel_silence()
         for closer in (self.stt, self.tts):
@@ -88,6 +96,7 @@ class CallSession:
         self._started = True
         self._turn_started = time.monotonic()
         self._stats_sent = False
+        self._schedule_call_deadlines()
         await self._set_state("connecting")
         greeting = asyncio.create_task(self._speak(GREETING))
         try:
@@ -175,6 +184,7 @@ class CallSession:
         if self._ended or self._closing:
             return
         self._ended = True
+        self._cancel_call_deadlines()
         await self._cancel_turn()
         self._cancel_silence()
         try:
@@ -199,6 +209,7 @@ class CallSession:
             return
         await self.send({"type": "error", "message": message})
         self._ended = True
+        self._cancel_call_deadlines()
         await self._cancel_turn()
         self._cancel_silence()
         await self._set_state("ended")
@@ -337,5 +348,60 @@ class CallSession:
             await task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            pass
+
+    # --------------------------------------------------------- call deadlines
+    def _schedule_call_deadlines(self) -> None:
+        """Vercel Functions terminate WebSockets at the function's maxDuration
+        (300 s on Hobby): warn the client at CALL_ENDING_SOON_SECONDS, then end
+        gracefully (summary + ended) at CALL_FORCE_END_SECONDS so the closing
+        events are delivered while the socket is still alive. Uses
+        loop.call_later handles — not tasks — so an idle session leaks nothing
+        at loop shutdown. Plain uvicorn has no such limit, so this only runs
+        when VERCEL is set (tests monkeypatch it to a small value)."""
+        if not os.environ.get("VERCEL"):
+            return
+        loop = asyncio.get_running_loop()
+        self._warn_handle = loop.call_later(
+            CALL_ENDING_SOON_SECONDS, self._on_ending_soon
+        )
+        self._end_handle = loop.call_later(
+            CALL_FORCE_END_SECONDS, self._on_force_end
+        )
+
+    def _cancel_call_deadlines(self) -> None:
+        for handle in (self._warn_handle, self._end_handle):
+            if handle is not None:
+                handle.cancel()
+        self._warn_handle = None
+        self._end_handle = None
+
+    def _on_ending_soon(self) -> None:
+        if self._ended or self._closing:
+            return
+        asyncio.create_task(self._send_ending_soon())
+
+    async def _send_ending_soon(self) -> None:
+        try:
+            await self.send(
+                {
+                    "type": "call_ending_soon",
+                    "seconds_left": int(
+                        CALL_FORCE_END_SECONDS - CALL_ENDING_SOON_SECONDS
+                    ),
+                }
+            )
+        except Exception:
+            pass
+
+    def _on_force_end(self) -> None:
+        if self._ended or self._closing:
+            return
+        asyncio.create_task(self._force_end())
+
+    async def _force_end(self) -> None:
+        try:
+            await self._end()
         except Exception:
             pass

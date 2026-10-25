@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
+import { clientFallbackSummary } from "./fallbackSummary";
 import { playback } from "./playback";
 import { useMic } from "./useMic";
 
@@ -40,6 +41,7 @@ export interface SessionData {
   stats: CallStats | null;
   summary: CallSummary | null;
   error: string | null;
+  notice: string | null;
 }
 
 const INITIAL: SessionData = {
@@ -49,6 +51,7 @@ const INITIAL: SessionData = {
   stats: null,
   summary: null,
   error: null,
+  notice: null,
 };
 
 type Action =
@@ -58,6 +61,7 @@ type Action =
   | { type: "stats"; stats: CallStats }
   | { type: "summary"; summary: CallSummary }
   | { type: "error"; error: string }
+  | { type: "notice"; notice: string }
   | { type: "reset" };
 
 function reducer(state: SessionData, action: Action): SessionData {
@@ -102,6 +106,8 @@ function reducer(state: SessionData, action: Action): SessionData {
       return { ...state, summary: action.summary, state: "ended" };
     case "error":
       return { ...state, error: action.error, state: "error" };
+    case "notice":
+      return { ...state, notice: action.notice };
   }
 }
 
@@ -111,6 +117,11 @@ export function useVoiceSession() {
   const wsRef = useRef<WebSocket | null>(null);
   const stateRef = useRef<CallState>("idle");
   stateRef.current = data.state;
+  const transcriptRef = useRef<TranscriptEntry[]>([]);
+  transcriptRef.current = data.transcript;
+  const summaryRef = useRef<CallSummary | null>(null);
+  summaryRef.current = data.summary;
+  const endingSoonRef = useRef(false);
 
   const sendJson = useCallback((payload: Record<string, unknown>) => {
     const ws = wsRef.current;
@@ -134,9 +145,21 @@ export function useVoiceSession() {
     wsRef.current = null;
   }, []);
 
+  // A warned hosting-limit close: end gracefully with the server summary if
+  // it arrived, otherwise build the client-side fallback from the transcript.
+  const finishAfterClose = useCallback(() => {
+    const existing = summaryRef.current;
+    if (existing) {
+      dispatch({ type: "summary", summary: existing });
+      return;
+    }
+    dispatch({ type: "summary", summary: clientFallbackSummary(transcriptRef.current) });
+  }, []);
+
   const start = useCallback(async () => {
     dispatch({ type: "reset" });
     teardownSocket();
+    endingSoonRef.current = false;
     // show connecting immediately: badge truth + onclose treats unclean
     // drops during handshake as connection-lost instead of silent idle
     dispatch({ type: "state", state: "connecting" });
@@ -205,7 +228,20 @@ export function useVoiceSession() {
             dispatch({ type: "summary", summary: msg.summary as CallSummary });
           }
           mic.stop();
+          teardownSocket(); // summary is the terminal event — free the socket
           break;
+        case "call_ending_soon": {
+          endingSoonRef.current = true;
+          const left =
+            typeof msg.seconds_left === "number"
+              ? Math.max(1, Math.round(msg.seconds_left))
+              : 30;
+          dispatch({
+            type: "notice",
+            notice: `This call will automatically end in about ${left} seconds (hosting time limit).`,
+          });
+          break;
+        }
         case "error":
           playback.flush();
           mic.stop();
@@ -228,10 +264,14 @@ export function useVoiceSession() {
       ) {
         mic.stop();
         playback.flush();
+        if (endingSoonRef.current) {
+          finishAfterClose(); // warned time-limit drop — end, don't error
+          return;
+        }
         dispatch({ type: "error", error: "Connection lost — please retry." });
       }
     };
-  }, [mic, playbackDone, sendAudio, sendJson, teardownSocket]);
+  }, [finishAfterClose, mic, playbackDone, sendAudio, sendJson, teardownSocket]);
 
   const end = useCallback(() => {
     sendJson({ type: "end" });
@@ -260,6 +300,7 @@ export function useVoiceSession() {
     tools: data.tools,
     stats: data.stats,
     summary: data.summary,
+    notice: data.notice,
     error: data.error ?? mic.error,
     start,
     end,
