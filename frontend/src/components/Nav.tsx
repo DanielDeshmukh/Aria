@@ -69,7 +69,7 @@ function ThemeToggle() {
       onClick={toggle}
       aria-label="Toggle color theme"
       title={dark ? "Switch to light theme" : "Switch to dark theme"}
-      className="group flex h-8 w-8 items-center justify-center justify-self-end rounded-full border border-line bg-paper/70 text-ink2 backdrop-blur-sm transition-colors hover:border-mint2 hover:text-pine"
+      className="group col-start-3 flex h-8 w-8 items-center justify-center justify-self-end rounded-full border border-line bg-paper/70 text-ink2 backdrop-blur-sm transition-colors hover:border-mint2 hover:text-pine"
     >
       <motion.span
         key={dark ? "sun" : "moon"}
