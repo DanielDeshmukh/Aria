@@ -31,7 +31,7 @@ export default function Footer() {
               </h2>
               <p className="mt-5 max-w-md text-[14px] leading-relaxed text-white/60">
                 Requirements are the floor — every one answered in conversation, no promise
-                outside policy, first audio inside the latency budget.
+                outside policy, first audio in about two seconds.
               </p>
             </div>
             <div className="flex flex-col items-start gap-5 md:items-end">

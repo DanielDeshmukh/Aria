@@ -18,7 +18,7 @@ export const HERO_STATS = [
   { value: 14, suffix: "", label: "voice scenarios", note: "full acceptance script" },
   { value: 6, suffix: "", label: "call states", note: "idle → ended, shown live" },
   { value: 0, suffix: "", label: "API keys in the browser", note: "every provider proxied server-side" },
-  { value: 1.5, suffix: "s", decimals: 1, prefix: "<", label: "latency target", note: "end of speech → first audio" },
+  { value: 2, suffix: "s", decimals: 0, prefix: "~", label: "reply latency", note: "end of speech → first audio" },
 ];
 
 /* ---------------- pipeline steps (landing "how it works") ---------------- */
@@ -42,7 +42,7 @@ export const PIPELINE = [
   {
     n: "04",
     title: "Speak",
-    desc: "Sarvam Bulbul v4 Flash synthesizes sentence by sentence, so the first audio reaches the speaker at about 1.9 s p50 instead of waiting for the whole reply to finish.",
+    desc: "Sarvam Bulbul v4 Flash synthesizes sentence by sentence and streams each sentence's audio chunk by chunk, so the first audio reaches the speaker in about two seconds instead of waiting for the whole reply to finish.",
   },
 ];
 
