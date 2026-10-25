@@ -23,6 +23,8 @@ running instance; headphones recommended.)
 
 <!-- demo -->
 
+**LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
+
 **Current status (2026-10-25):** all four assignment phases are shipped —
 117 tests green in CI, the 14-scenario runbook passes **14/14 locally and on
 the public URL**, and the live link is verified end-to-end (health probe,
@@ -62,6 +64,15 @@ email.
 ---
 
 ## 1. Overview
+
+> **Approach note (2–3 sentences):** I built Aria as a modular streaming voice
+> pipeline — Deepgram STT → Groq with tool calling → Sarvam TTS over a single
+> WebSocket — so latency, endpointing and barge-in stay tunable at every stage
+> instead of hidden inside a speech-to-speech API. Brand policy is computed in
+> code (`policy.py` + the mock order database) and only paraphrased by the
+> model, so the agent can phrase a decision but never make one. Everything is
+> verified by a 14-scenario scripted runbook that runs against the production
+> path, and is replayed against the public URL as the final pre-submit check.
 
 Aria answers Aura Skincare customers' questions (products, routines, orders,
 discounts, complaints) in a natural voice conversation. The full assignment
