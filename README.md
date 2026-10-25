@@ -17,7 +17,7 @@ and a post-call summary. The in-browser call screen is complete: mic capture →
 WebSocket session → live state badge → audio playback, with the test-orders
 helper, live transcript and post-call summary panels all shipped.
 
-**Live demo:** `https://<VERCEL_URL>` — allow the microphone, press Start Call,
+**Live demo:** `https://aria-auraskincare-daniel.vercel.app` — allow the microphone, press Start Call,
 and speak. (Production runs on Vercel — see [§12](#12-public-demo-link-deploy);
 the local quick-tunnel link still works as a fallback:
 https://danieldeshmukh.github.io/aria-demo-link/ — headphones recommended.)
@@ -423,8 +423,9 @@ macOS/Linux equivalent: `curl http://localhost:7860/api/health`.
 
 ## 12. Public demo link (deploy)
 
-**Live URL:** `https://<VERCEL_URL>` — filled in after the production deploy;
-the §16 runbook is then re-run against it as the final pre-submit check.
+**Live URL:** `https://aria-auraskincare-daniel.vercel.app` — production
+deploy (Vercel, `bom1`); `/api/health`, `/api/ws-selftest` and the
+`ws_smoke` call probe were verified against it.
 
 The production deployment is one Vercel project with **two services**, defined
 in `vercel.json` (Vercel Services) and sharing one domain, one set of
@@ -461,9 +462,9 @@ Deploy (manual, one time):
    [§7](#7-testing--ci):
 
 ```bash
-curl https://<VERCEL_URL>/api/health         # {"status":"ok","service":"aria"}
-curl https://<VERCEL_URL>/api/ws-selftest    # outbound Deepgram/Sarvam/Groq reachability from the function
-python -m backend.scripts.ws_smoke wss://<VERCEL_URL>/ws/call
+curl https://aria-auraskincare-daniel.vercel.app/api/health         # {"status":"ok","service":"aria"}
+curl https://aria-auraskincare-daniel.vercel.app/api/ws-selftest    # outbound Deepgram/Sarvam/Groq reachability from the function
+python -m backend.scripts.ws_smoke wss://aria-auraskincare-daniel.vercel.app/ws/call
 ```
 
 then replay the §16 runbook against that `wss://` URL — the final
