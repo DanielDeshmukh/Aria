@@ -24,7 +24,7 @@ export const HERO_STATS = [
 
 export const TICKER = [
   "Deepgram STT",
-  "Groq · qwen3.8-27b",
+  "Groq · gpt-oss-120b",
   "Sarvam Bulbul v4 Flash",
   "FastAPI WebSockets",
   "Vercel",
@@ -276,7 +276,7 @@ export const STACK = [
     choice: "Deepgram streaming (default)",
     why: "Low latency, endpointing built in. Test Sarvam STT as a swap on Day 2 if Hinglish or accent accuracy is weak.",
   },
-  { layer: "LLM", choice: "Groq — qwen3.8-27b", why: "Fast first token and the most stable tool-calling loop of the Groq models benchmarked." },
+  { layer: "LLM", choice: "Groq — gpt-oss-120b", why: "Fast first token, tool calling, and automatic prompt caching — cached tokens don't count against rate limits." },
   { layer: "TTS", choice: "Sarvam Bulbul v4 Flash (bulbul:v4-flash)", why: "Indian voices, Hinglish, sub-250ms time-to-first-audio." },
   { layer: "Hosting", choice: "Vercel — FastAPI service + static frontend", why: "One URL and one origin through service rewrites, no CORS, wss verified live." },
   {
