@@ -25,7 +25,7 @@ export default function Footer() {
             <div>
               <span className="font-mono text-[11px] uppercase tracking-[0.3em] text-[#a5e8cd]">final word</span>
               <h2 className="mt-4 max-w-2xl text-balance font-display text-5xl font-medium leading-[1.02] tracking-tight md:text-7xl">
-                Finish A–E live.
+                Ship it live.
                 <br />
                 Keep it <span className="italic text-[#a5e8cd]">fast and honest.</span>
               </h2>
