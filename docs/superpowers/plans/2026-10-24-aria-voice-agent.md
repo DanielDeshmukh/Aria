@@ -23,7 +23,7 @@ Browser (React SPA, single origin)
   Single Docker container: Node build stage → python:3.11-slim, uvicorn :7860
 ```
 
-**Tech stack (locked).** React + Vite (existing SPA, `viteSingleFile`) · FastAPI + WebSockets · Deepgram `nova-3` (`language=multi` — superseded `en-IN` in T21: `en-IN` returned empty conf-0.0 finals on Hinglish lines; keyterm hints) · Groq `llama-3.3-70b-versatile` via `openai` SDK (`base_url=https://api.groq.com/openai/v1`) · Sarvam `wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v4-flash` · `websockets` for provider clients · HF Spaces (Docker SDK, port 7860).
+**Tech stack (locked).** React + Vite (existing SPA, `viteSingleFile`) · FastAPI + WebSockets · Deepgram `nova-3` (`language=multi` — superseded `en-IN` in T21: `en-IN` returned empty conf-0.0 finals on Hinglish lines; keyterm hints) · Groq `llama-3.3-70b-versatile` via `openai` SDK (`base_url=https://api.groq.com/openai/v1`) · Sarvam `wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v4-flash` · `websockets` for provider clients · HF Spaces (Docker SDK, port 7860) — **host superseded in T22**: HF Docker/Gradio now PRO-only (`402`); final host = Cloudflare quick tunnel + GitHub Pages stable redirect (PDF §7 "or any equivalent platform"), Docker image kept on :7860.
 
 **Spec (source of truth).**
 - Briefing PDF: `AI+Tech intern-assesment.pdf` (extracted: `pdf_extract.txt`).
@@ -61,7 +61,7 @@ Browser (React SPA, single origin)
 | §9 README 4 answers + architecture/setup | T23 |
 | §10.1–10.5 Deliverables (URL, repo, video, approach note, LinkedIn) | T22, T23, T24 |
 | §11 Email + §13 pre-submit checklist | T24 |
-| §7 Deployment: HF Spaces Docker, :7860, secrets, wake before submit | T22, T24 |
+| §7 Deployment: publicly accessible URL (PDF: HF *or any equivalent*); final host = Cloudflare quick tunnel + stable redirect (no card, no cold start), Docker :7860 image kept | T22, T24 |
 | §8 14 test scenarios | T6 (text harness), T21 (live runbook) |
 
 **Day map** (deadline Oct 27): Day 1 (Oct 24) = T1–T8 · Day 2 (Oct 25) = T9–T14 · Day 3 (Oct 26) = T15–T22 · Day 4 (Oct 27, buffer) = T23–T24 + submission.
@@ -564,16 +564,18 @@ useVoiceSession(): { state, transcript, tools, stats, summary, error, start(), e
 
 ---
 
-#### Task 22 — Docker build + Hugging Face Spaces deploy
+#### Task 22 — Docker build + public deploy (host superseded: HF → Cloudflare quick tunnel)
 
-**Files:** none changed (Dockerfile verified); `backend/scripts/ws_smoke.py` added.
+**Files:** `Dockerfile` verified unchanged; `backend/scripts/ws_smoke.py` added (commit `1df43af`); `start-demo.ps1` + `start-demo.bat` added.
 **Steps:**
-1. [ ] Verify `Dockerfile` matches contract: multi-stage ✓, `EXPOSE 7860` ✓, `CMD uvicorn ... --port 7860` ✓ (already true — re-read to confirm no drift after dependency changes; `requirements.txt` picked up automatically).
-2. [ ] Local build (if Docker available): `docker build -t aria .` → `docker run -p 7860:7860 -e DEEPGRAM_API_KEY=... -e GROQ_API_KEY=... -e SARVAM_API_KEY=... aria` → `curl localhost:7860/api/health` → ok. If Docker unavailable locally, note it and rely on HF build logs.
-3. [ ] HF Space (user actions, exact steps): hf.co → New Space → owner `Daniel2503`, name `aria-voice-agent`, SDK **Docker**, CPU basic → `git remote add hf https://huggingface.co/spaces/Daniel2503/aria-voice-agent` → Settings ▸ Secrets: `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `SARVAM_API_KEY` → push `main` → watch Space build logs until running → **front matter:** README gains `---\ntitle: Aria Voice Agent\nsdk: docker\napp_port: 7860\n---` (Task 23 owns the full README — push happens after T23; order swap: do T23 first, then deploy here. **Reordered execution: T23 → T22.**)
-4. [ ] `scripts/ws_smoke.py`: `websockets.connect("wss://<space>.hf.space/ws/call")` → `start` → assert greeting `audio` + `state` events within 15 s → `end` → assert `summary`. Run against deployed URL.
-5. [ ] Verify `/call` loads on the live URL (Playwright against https, fake mic), `/pipeline` deep link still works, hero CTA visible. Commit script: `feat(backend): remote WS smoke test`
-**Verification:** live URL: health ok, ws smoke passes, `/call` loads.
+1. [x] Verify `Dockerfile` matches contract: multi-stage ✓, `EXPOSE 7860` ✓, `CMD uvicorn ... --port 7860` ✓ (no drift after dependency changes).
+2. [x] Local build/run (Docker 29.6.1): `docker build -t aria .` → `docker run -p 7860:7860` with the 3 keys → `/api/health` ok, `/pipeline` 200 → `ws_smoke` against the container **PASS** (greeting 1.9 s, 4-key summary 3.0 s) → container removed. (`ws_smoke` first run failed on its own bug — the greeting lambda checked `"state" in got_state` while the list holds state *values*; fixed to `bool(got_state)` before passing.)
+3. [x] **Host decision trail:** `hf repo create` → **`402 Payment Required`** (Oct 2026: Docker/Gradio Spaces require PRO; only static is free — our FastAPI/WS app can't be static). Google Cloud Run → billing account requires a card (user has none); Render free → no card but ~60 s cold start, violating deliverable #1 ("no cold-start delay") — user rejected; Koyeb ($29 hold), Fly (card after trial), Railway (trial→card), SnapDeploy (WebSockets paid-only) all excluded. **Chosen: Cloudflare Quick Tunnel** (`cloudflared tunnel --url http://localhost:8000`, no account/card, official product; PDF §7 "…or any equivalent platform" — the only hard requirement is a publicly openable URL) + **stable redirect** `https://danieldeshmukh.github.io/aria-demo-link/` (separate 2-file repo `DanielDeshmukh/aria-demo-link`, GitHub Pages, repointed automatically by `start-demo.ps1` on every tunnel restart so the submitted link never changes).
+4. [x] `ws_smoke.py`: connect → `start` → greeting `state`+`audio` ≤15 s → `end` → 4-key `summary` within 15 s → exit 0/1, every event timestamped. **PASS against local container AND public `wss://<tunnel>/ws/call`** (greeting 5.8 s, summary 8.0 s).
+5. [x] Live-URL checks: health ok through tunnel; `/pipeline` 200 (445 kB); **all 14 §8 runbook scenarios replayed on the public wss URL** → `RUNBOOK-DONE 14`, exit 0 (guardrails held on live: #14 injection deflected to return policy, #6 COD ₹2,500, #8 barge-in, #10 48h-first, #13 ₹499 ambiguity; known quirks only: #3 STT-mangled id → graceful re-ask, #4/5/7/9 `language=multi` cosmetic script swaps); Playwright against the stable link → redirect → landing (`#call`, `#pipeline`, Start Call) + `/call` 200 (panel start + home back) + `/pipeline` 200 + **0 console errors** → `LIVE-PASS`.
+**Verification:** stable link → tunnel → app; ws smoke PASS local + public; 14/14 public runbook; Playwright LIVE-PASS.
+
+**Operations:** the demo machine must stay awake while evaluators test; `start-demo.bat` restores everything in one click (server → tunnel → stable-link repoint → prints both URLs). No cold start ever — the server is always warm; tunnel startup ≈ 5 s. **Hardened during T22:** `start-demo.ps1` *reuses* an already-healthy tunnel (never restarts one — rapid kill/create triggered a Cloudflare registration block: URL issued but `"Unauthorized: Tunnel not found"` loops + NXDOMAIN until cooldown) and waits for real DNS+origin health before repointing the redirect. Mid-flight outage also traced once to uvicorn itself being down (tunnel log: `dial tcp [::1]:8000 ... refused` → 502); check `http://localhost:8000/api/health` first when the link 502s.
 
 ---
 
@@ -588,7 +590,7 @@ useVoiceSession(): { state, transcript, tools, stats, summary, error, start(), e
    - **Architecture:** diagram (text version from plan header) + per-stage roles + latency budget note.
    - **How guardrails work:** policy computed in code (`policy.py` reasons returned by tools), prompt only phrases; injection resistance explanation; ₹499 boundary as thoughtful edge case. → new §15
    - **Test scenarios:** the 14-row table (§8 of spec) with expected results. → new §16 (all 14 marked pass on local scripted run; live-URL repeat pending T22/T24)
-   - **Notes for evaluators:** headphones (echo), sample orders on the page, mic permission, Space may sleep 48 h (wake by opening URL first). → new §17
+   - **Notes for evaluators:** headphones (echo), sample orders on the page, mic permission, stable link always resolves to the running tunnel (reload after a few seconds if needed — no cold start). → new §17
    - **Section 9 answers (4):** draft from spec §10 starting points — **must be rewritten in Daniel's own voice before submission** (they will be asked follow-ups): ① why this stack, ② hardest part (order-ID STT mangling + latency; solved via normalization + sentence-level TTS flush), ③ one more week (eval harness, VAD tuning, Hinglish, analytics), ④ 1,000 calls/day (concurrency, fallbacks, cost, monitoring, PII, human handoff, real order API, regression tests). → new §18 (first-person draft, to re-read/own before sending)
    - Setup/env table (3 keys, where they live — never in browser).
 2. [x] `requirements.txt` final: `fastapi`, `uvicorn[standard]`, `openai>=1.50`, `websockets>=12`, `python-dotenv>=1`. `requirements-dev.txt`: `-r requirements.txt`, `pytest>=8`, `httpx>=0.27`, `pytest-timeout>=2.4` (plan originally said `>=3` — **no 3.x exists on PyPI**, latest is 2.4.0 / 2.5.0 yanked; CI install failed on the `>=3` pin, fixed immediately).
@@ -608,7 +610,7 @@ useVoiceSession(): { state, transcript, tools, stats, summary, error, start(), e
 2. [ ] **Approach note (2–3 sentences):** adapt spec §12 draft to what was actually built (streaming Deepgram→Groq→Sarvam pipeline, policy computed in code, barge-in, transcript + JSON summary). Every claim must survive interview follow-up.
 3. [ ] **Pre-submit checklist (spec §13), executed in order:**
    - [ ] Deployed URL tested on different device + network; mic permission works
-   - [ ] Space awake (open it right before sending) — no 30–60 s cold start
+    - [ ] Machine awake + tunnel running (`start-demo.bat`) — stable link resolves, no cold start
    - [ ] All 14 §8 scenarios pass on the **live** URL (re-run from T21 runbook)
    - [ ] PDF §2 A–E matrix fully ticked (open this plan's matrix and verify each row against the live app)
    - [ ] Repo public; no keys in history (T23 scan); `.env.example` complete

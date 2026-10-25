@@ -23,8 +23,9 @@ and a post-call summary. The in-browser call screen is complete: mic capture →
 WebSocket session → live state badge → audio playback, with the test-orders
 helper, live transcript and post-call summary panels all shipped.
 
-**Live demo:** `<live-link>` (Hugging Face Space) — allow the microphone,
-press Start Call, and speak.
+**Live demo:** https://danieldeshmukh.github.io/aria-demo-link/ — allow the
+microphone, press Start Call, and speak. (The link redirects to the currently
+running instance; headphones recommended.)
 
 <!-- demo -->
 
@@ -47,7 +48,7 @@ press Start Call, and speak.
 9. [Client-side routing notes](#9-client-side-routing-notes)
 10. [Environment variables](#10-environment-variables)
 11. [Docker](#11-docker)
-12. [Deploy to Hugging Face Spaces](#12-deploy-to-hugging-face-spaces)
+12. [Public demo link (deploy)](#12-public-demo-link-deploy)
 13. [Troubleshooting](#13-troubleshooting)
 14. [Assignment documents](#14-assignment-documents)
 15. [How guardrails work](#15-how-guardrails-work)
@@ -66,12 +67,12 @@ spec, test script and 4-day schedule live in
 
 | Phase | Deliverable | Status |
 |---|---|---|
-| **1** | Landing site (hero + embedded live call + pipeline), FastAPI scaffold, Docker/HF layout | shipped |
+| **1** | Landing site (hero + embedded live call + pipeline), FastAPI scaffold, Docker layout | shipped |
 | **2** | Voice session: WebSocket, streaming STT → LLM → TTS with tool calling | backend shipped (`/ws/call`) |
 | **3** | Tools, guardrails, call summary, barge-in, full call screen | shipped |
 | — | In-browser call screen: mic capture, WS session, state badge, playback, transcript, orders helper, summary | shipped |
 | **4** | Local production-path E2E + 14-scenario runbook (localhost:8000, 14/14 scripted) | shipped |
-| — | Hugging Face Space launch, demo assets, final submission | pending |
+| — | Public demo link (tunnel + stable redirect) · demo assets · final submission | link live; video + email pending |
 
 ## 2. Architecture
 
@@ -347,13 +348,13 @@ Copy-Item .env.example .env
 | `SARVAM_VOICE` | no (default `simran_en_customer`) | TTS persona override | server only |
 
 `.env` is git-ignored and excluded from the Docker build context. Keys must
-**never** reach the browser — on Hugging Face they go in
-**Settings ▸ Secrets**, locally in `.env`.
+**never** reach the browser — they live in `.env` locally and in the demo
+host's environment, server-side only.
 
 ## 11. Docker
 
 Multi-stage build: `node:22-alpine` compiles the frontend, `python:3.11-slim`
-runs Uvicorn on **port 7860** (the port HF Spaces expects).
+runs Uvicorn on **port 7860** (the app's serving port).
 
 ```powershell
 docker build -t aria-voice-agent .
@@ -367,25 +368,23 @@ docker stop aria-smoke; docker rm aria-smoke
 
 macOS/Linux equivalent: `curl http://localhost:7860/api/health`.
 
-## 12. Deploy to Hugging Face Spaces
+## 12. Public demo link (deploy)
 
-1. Create a Space with **SDK: Docker**, hardware **CPU Basic (free)**.
-2. Add this repository as a second remote and push:
+The live demo is the one server (Docker or `uvicorn`) running on the demo
+machine, published through a **Cloudflare quick tunnel** (no account, no
+card, ~5 s to start) behind a **stable redirect link**:
 
-   ```bash
-   git remote add hf https://huggingface.co/spaces/DanielDeshmukh/aria-voice-agent
-   git branch -M main
-   git push hf main
-   ```
+**https://danieldeshmukh.github.io/aria-demo-link/**
 
-3. Space → **Settings ▸ Variables and secrets**: add the three keys from
-   [§10](#10-environment-variables).
-4. HF builds the `Dockerfile` remotely; the README front matter
-   (`sdk: docker`, `app_port: 7860`) points the Space at it.
-5. Free Spaces sleep after ~48 h idle — wake it before demos.
+1. Run `start-demo.bat` — it starts the server if needed, opens the tunnel,
+   points the stable link at the fresh tunnel URL, and prints both URLs.
+2. The stable link auto-forwards to whatever tunnel is currently running, so
+   the URL above never changes.
+3. Keep the machine awake while evaluators test: the server is always warm,
+   so there is **no cold-start delay** — the tunnel itself starts in ~5 s.
 
-> `git remote add hf` is verified; `git push hf main` executes at deploy time
-> (requires your Hugging Face token — `hf auth login` or Space write token).
+The Docker image (§11) is the same artifact: run it on `:7860` and point the
+tunnel at that port instead of `localhost:8000`.
 
 ## 13. Troubleshooting
 
@@ -471,9 +470,9 @@ The same script runs against the deployed URL as the final pre-submit check.
   *ORD-101* (or the word form "ord one zero one" — both normalize).
 * **Hinglish works:** "Mera order kahan hai?" is transcribed with
   `language=multi` and answered in Hinglish.
-* **Space sleep:** free Hugging Face Spaces idle out after ~48 h — open the
-  live URL once before testing (first load can take 30–60 s).
-* Keys live in **Settings ▸ Secrets** / `.env`, server-side only; the
+* **The link always resolves:** the stable redirect points at the tunnel
+  currently running — if a page fails to open, wait a few seconds and reload.
+* Keys live in `.env` / the demo host's environment, server-side only; the
   browser never sees them.
 
 ## 18. Section 9 answers

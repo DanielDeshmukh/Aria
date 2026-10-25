@@ -1,7 +1,8 @@
 """Remote WebSocket smoke test for a deployed (or local container) Aria.
 
-Run: python -m backend.scripts.ws_smoke wss://<space>.hf.space/ws/call
-     (URL defaults to ws://localhost:7860/ws/call when omitted)
+Run: python -m backend.scripts.ws_smoke wss://<public-host>/ws/call
+     (URL defaults to ws://localhost:7860/ws/call when omitted; works
+     against the quick tunnel, a container, or local uvicorn)
 
 Asserts the deployed voice session works end to end without a browser:
   1. connect, send `start` → greeting `state` + `audio` events within 15 s
