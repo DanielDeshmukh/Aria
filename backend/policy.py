@@ -34,6 +34,20 @@ FREE_SHIPPING_ABOVE = 499
 RETURN_WINDOW_DAYS = 7
 DAMAGED_REPORT_HOURS = 48
 
+# Enforcement sentence for the assignment's policy-enforcement example
+# ("bought ... and have opened it — can I return it?"): the opened/used
+# condition is the one eligibility rule no order field can carry, so the
+# decision lives here (interpolated verbatim into the system prompt) and the
+# LLM only phrases it. Damaged/defective stays on the separate 48-hour path.
+OPENED_RETURN_RULE = (
+    "Opened, used or unpackaged products cannot be returned — even when the "
+    "delivery was within the 7-day window — because returns cover only "
+    "unopened, unused products in original packaging. Decline politely: it "
+    "falls outside the return policy, and you must never promise a refund. A "
+    "product that arrived damaged or defective is handled by the separate "
+    "48-hour replacement rule, not this one."
+)
+
 
 def parse_value(value: str) -> int:
     return int(value.replace("₹", "").replace(",", "").strip())
@@ -64,6 +78,7 @@ def return_eligibility(order: dict) -> dict:
         }
     return {
         "return_eligible": True,
+        "condition_required": "unopened, unused, original packaging",
         "return_reason": (
             f"Delivered {days} days ago, within the {RETURN_WINDOW_DAYS}-day window — "
             "valid only if unopened, unused, in original packaging."
