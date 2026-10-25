@@ -233,39 +233,6 @@ export const AMBIGUITY = {
   body: "Shipping is free above ₹499 and costs ₹50 below ₹499. An order of exactly ₹499 (ORD-102) falls in neither band. Aria must not invent an answer: she says the policy covers orders above and below ₹499 and that she can't confirm the charge for exactly ₹499. Decide this behavior now, and call it out in the README as a thoughtful edge case.",
 };
 
-export const ORDERS = [
-  {
-    id: "ORD-101",
-    customer: "Priya Sharma",
-    product: "Vitamin C Serum (30ml)",
-    value: "₹699",
-    status: "Out for Delivery",
-    carrier: "BlueDart",
-    tracking: "BD-982103",
-    note: "Expected by 6 PM today",
-  },
-  {
-    id: "ORD-102",
-    customer: "Rahul Verma",
-    product: "Hydrating Sunscreen SPF 50",
-    value: "₹499",
-    status: "Delivered",
-    carrier: "Delhivery",
-    tracking: "DL-441029",
-    note: "Delivered 14 days ago · the ₹499 boundary case",
-  },
-  {
-    id: "ORD-103",
-    customer: "Ananya Patel",
-    product: "Green Tea Face Wash + Toner",
-    value: "₹850",
-    status: "Processing",
-    carrier: "—",
-    tracking: "—",
-    note: "Ordered 3 hours ago · eligible for cancellation",
-  },
-];
-
 /* ---------------- 5 · architecture ---------------- */
 
 export const STACK = [

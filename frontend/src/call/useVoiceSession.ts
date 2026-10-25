@@ -30,6 +30,8 @@ export interface ToolEvent {
 
 export interface CallStats {
   first_audio_ms: number;
+  /** server-side order lookup + policy verdict, ms (tool turns only) */
+  tool_lookup_ms?: number;
 }
 
 export type CallSummary = Record<string, unknown>;
@@ -220,7 +222,15 @@ export function useVoiceSession() {
           break;
         case "stats":
           if (typeof msg.first_audio_ms === "number") {
-            dispatch({ type: "stats", stats: { first_audio_ms: msg.first_audio_ms } });
+            dispatch({
+              type: "stats",
+              stats: {
+                first_audio_ms: msg.first_audio_ms,
+                ...(typeof msg.tool_lookup_ms === "number"
+                  ? { tool_lookup_ms: msg.tool_lookup_ms }
+                  : {}),
+              },
+            });
           }
           break;
         case "summary":

@@ -131,6 +131,29 @@ discounts, complaints) in a natural voice conversation.
   live state badge, first-audio chip and gapless audio playback
   (`frontend/src/call/`).
 
+### 2.1 Data layer
+
+The "database" is a single JSON file of mock orders — `backend/data/orders.json`
+(three orders: ORD-101/102/103) — read once at import time.
+
+* **Repository:** `backend/data/orders.py` exposes `load_orders()` and
+  `get_order(order_id)`; `backend/tools.py` calls `get_order()` and never
+  touches the dict directly, so swapping storage is a one-function change.
+  Eligibility verdicts are computed by `backend/policy.py` from the fetched
+  record — the model only words them.
+* **Swap path:** point `get_order()` at Postgres/Supabase
+  (`SELECT ... WHERE id = $1`) with the same `dict | None` return shape;
+  every caller (tools, tests, future handlers) keeps working unchanged, and
+  the JSON file stays as the local/dev fixture.
+* **Cost:** lookup + policy verdict is measured per turn as `tool_lookup_ms`
+  in the `stats` event — typical **0.01 ms** (p50, n=2000; p95 0.02 ms,
+  max 0.17 ms; a live call reports ~0.1 ms). Against STT endpointing
+  (300 ms), the LLM tool loop (0.7–2 s) and TTS first frame (0.4–0.6 s) the
+  data layer is effectively free (<0.01% of the turn budget).
+* **Panel mirror:** the call screen's Test orders panel renders
+  `frontend/src/data/orders.ts`; `backend/tests/test_frontend_orders_sync.py`
+  fails CI if its factual fields ever drift from `orders.json`.
+
 ## 3. Tech stack
 
 | Layer | Technology | Version tested | Role |
@@ -343,7 +366,7 @@ Server → client frames:
 | `audio` | `mime` (`audio/l16;rate=16000`), `data` | one synthesized agent sentence |
 | `barge_in` | — | customer interrupted the agent (turn cancelled) |
 | `tool` | `name`, `args`, `result` | order/policy tool executed |
-| `stats` | `first_audio_ms` | turn latency (first sentence audible) |
+| `stats` | `first_audio_ms`, `tool_lookup_ms` (tool turns) | turn latency to first audio; server-side order lookup + policy verdict cost |
 | `summary` | `transcript`, `summary` | 4-key post-call summary (LLM, deterministic fallback) |
 | `call_ending_soon` | `seconds_left` | host is about to enforce its call-time limit (270 s; server force-ends at 295 s) — client shows a notice and hangs up gracefully, with the summary sent first |
 | `error` | `message` | provider failure — message contains names only, never secrets |

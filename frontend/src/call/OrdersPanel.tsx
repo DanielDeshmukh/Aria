@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Chip } from "../components/ui";
-import { ORDERS } from "../data/plan";
+import { ORDERS } from "../data/orders";
 import { cn } from "../utils/cn";
 
 const STATUS_TONE: Record<string, "default" | "pine" | "warm" | "pop"> = {

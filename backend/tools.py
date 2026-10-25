@@ -6,11 +6,24 @@ fetch data and attach computed flags, so the model can never invent policy.
 
 from __future__ import annotations
 
-from .data.orders import load_orders
+import time
+
+from .data.orders import ORDERS, get_order  # ORDERS re-exported for summary.py and tests
 from .normalize import normalize_order_id
 from . import policy
 
-ORDERS: dict[str, dict] = load_orders()
+# Server-side cost of the last get_order_details call (id normalization +
+# repository lookup + policy verdict), in milliseconds. session.py copies it
+# into the per-turn stats event as tool_lookup_ms.
+LAST_LOOKUP_MS: float | None = None
+
+
+def last_lookup_ms() -> float | None:
+    return LAST_LOOKUP_MS
+
+
+def _ms_since(started: float) -> float:
+    return (time.perf_counter() - started) * 1000.0
 
 NOT_FOUND_MESSAGE = (
     "I couldn't locate an order with that number, could you please repeat or verify "
@@ -68,11 +81,14 @@ TOOL_SCHEMAS: list[dict] = [
 
 
 def get_order_details(order_id: str) -> dict:
+    global LAST_LOOKUP_MS
+    started = time.perf_counter()
     normalized = normalize_order_id(order_id)
     if normalized is None:
         # Runbook scenarios 9/11: the model called with "Order"/"just now".
         # A non-id must never come back as NOT_FOUND — steer the reply to
         # ask the customer to say the order id again instead.
+        LAST_LOOKUP_MS = _ms_since(started)
         return {
             "found": False,
             "error": "NO_ORDER_ID",
@@ -83,8 +99,9 @@ def get_order_details(order_id: str) -> dict:
                 "found — ask the customer to say the order id again."
             ),
         }
-    order = ORDERS.get(normalized)
+    order = get_order(normalized)
     if order is None:
+        LAST_LOOKUP_MS = _ms_since(started)
         return {
             "found": False,
             "error": "NOT_FOUND",
@@ -98,6 +115,7 @@ def get_order_details(order_id: str) -> dict:
         **policy.cod_available(value),
         **policy.shipping_for(value),
     }
+    LAST_LOOKUP_MS = _ms_since(started)
     return {"found": True, "order": order, "flags": flags}
 
 

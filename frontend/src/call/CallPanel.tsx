@@ -21,6 +21,9 @@ export default function CallPanel() {
       {/* live status row */}
       <div className="mb-5 flex flex-wrap items-center gap-2.5">
         {stats && <Chip tone="pine">first audio {stats.first_audio_ms} ms</Chip>}
+        {stats?.tool_lookup_ms !== undefined && (
+          <Chip>tool lookup {stats.tool_lookup_ms} ms</Chip>
+        )}
         <StateBadge state={state} />
       </div>
 

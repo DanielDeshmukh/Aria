@@ -52,6 +52,7 @@ class CallSession:
         self._silence_task: asyncio.Task | None = None
         self._turn_started = time.monotonic()
         self._stats_sent = False
+        self._tool_lookup_ms: float | None = None
         self._last_interim_at = 0.0
         self._still_there_sent = False
         self._warn_handle: asyncio.TimerHandle | None = None
@@ -96,6 +97,7 @@ class CallSession:
         self._started = True
         self._turn_started = time.monotonic()
         self._stats_sent = False
+        self._tool_lookup_ms = None
         self._schedule_call_deadlines()
         await self._set_state("connecting")
         greeting = asyncio.create_task(self._speak(GREETING))
@@ -230,11 +232,12 @@ class CallSession:
     async def _run_turn(self) -> None:
         self._turn_started = time.monotonic()
         self._stats_sent = False
+        self._tool_lookup_ms = None
         await self._set_state("thinking")
         buffer = ""
         try:
             async for event in self.llm.chat(
-                self.messages, tools_mod.TOOL_SCHEMAS, tools_mod.dispatch
+                self.messages, tools_mod.TOOL_SCHEMAS, self._execute_tool
             ):
                 if self._ended:
                     break  # a provider failed mid-turn; session already errored
@@ -259,6 +262,13 @@ class CallSession:
         if self.state == "thinking":
             await self._set_state("listening")
             self._arm_silence()
+
+    def _execute_tool(self, name: str, args: dict) -> dict:
+        """dispatch() plus capture of the lookup timing for the stats event."""
+        result = tools_mod.dispatch(name, args)
+        if name == "get_order_details":
+            self._tool_lookup_ms = tools_mod.last_lookup_ms()
+        return result
 
     async def _flush(self, buffer: str, final: bool = False) -> str:
         sentences, rest = split_sentences(buffer)
@@ -316,12 +326,13 @@ class CallSession:
 
     # ----------------------------------------------------------------- helpers
     async def _send_stats(self) -> None:
-        await self.send(
-            {
-                "type": "stats",
-                "first_audio_ms": int((time.monotonic() - self._turn_started) * 1000),
-            }
-        )
+        payload: dict = {
+            "type": "stats",
+            "first_audio_ms": int((time.monotonic() - self._turn_started) * 1000),
+        }
+        if self._tool_lookup_ms is not None:
+            payload["tool_lookup_ms"] = round(self._tool_lookup_ms, 2)
+        await self.send(payload)
 
     async def _set_state(self, state: str) -> None:
         self.state = state
