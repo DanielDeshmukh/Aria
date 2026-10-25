@@ -142,9 +142,40 @@ def test_vercel_json_configuration() -> None:
     config = json.loads((ROOT / "vercel.json").read_text(encoding="utf-8"))
     assert config["fluid"] is True  # WebSockets require Fluid compute
     assert config["regions"] == ["bom1"]  # Mumbai
-    entry = config["functions"]["main.py"]
+
+    # one project, two services: FastAPI backend + Vite static frontend
+    app = config["services"]["app"]
+    assert app["root"] == "."
+    assert app["framework"] == "fastapi"
+    assert app["entrypoint"] == "main:app"
+    entry = app["functions"]["main.py"]
     assert entry["maxDuration"] == 300  # Hobby maximum
-    assert "npm run build" in config["buildCommand"]
+    assert "backend/tests/**" in entry["excludeFiles"]
+
+    frontend = config["services"]["frontend"]
+    assert frontend["root"] == "frontend"
+    assert frontend["framework"] == "vite"
+    assert frontend["installCommand"] == "npm ci"
+    assert "npm run build" in frontend["buildCommand"]
+    assert frontend["outputDirectory"] == "dist"
+    # deep links (/call, /pipeline) fall back to the SPA shell inside the service
+    assert frontend["rewrites"] == [
+        {"source": "/(.*)", "destination": "/index.html"}
+    ]
+
+    # public routing, most specific first: /api and /ws keep their original
+    # paths on the app service; everything else is the static site
+    assert [
+        (rule["source"], rule["destination"]["service"])
+        for rule in config["rewrites"]
+    ] == [
+        ("/api/(.*)", "app"),
+        ("/ws/(.*)", "app"),
+        ("/(.*)", "frontend"),
+    ]
+
+    # no server-to-server calls in this repo, so no service bindings
+    assert all("bindings" not in svc for svc in config["services"].values())
 
 
 def test_vercelignore_excludes_env_and_local_clutter() -> None:

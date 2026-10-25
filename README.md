@@ -30,7 +30,8 @@ https://danieldeshmukh.github.io/aria-demo-link/ — headphones recommended.)
 134 tests green in CI, the 14-scenario runbook passes 14/14 on the production
 path (and 14/14 on the earlier public tunnel URL), and the site nav lists
 every section at clean paths (`/call`, `/pipeline` — no hash URLs anywhere).
-The code is Vercel-ready (Fluid WebSockets, `vercel.json` committed); before
+The code is Vercel-ready (multi-service `vercel.json`: FastAPI + Vite, Fluid
+WebSockets); before
 submission remaining: the production deploy + URL verification
 ([§12](#12-public-demo-link-deploy)), the demo video (placeholder above), a
 final pre-submit check from a second device, and the submission email.
@@ -86,7 +87,7 @@ discounts, complaints) in a natural voice conversation.
 | — | In-browser call screen: mic capture, WS session, state badge, playback, transcript, orders helper, summary | shipped |
 | **4** | Local production-path E2E + 14-scenario runbook (localhost:8000, 14/14 scripted) | shipped — 14/14 locally (and 14/14 on the earlier tunnel URL) |
 | — | Vercel adaptation: Fluid WebSockets, `main.py` entrypoint, 5-minute call deadline, outbound selftest | shipped (`vercel.json` committed) |
-| — | Public demo on Vercel (single Python function, region `bom1`) | ready to deploy — [§12](#12-public-demo-link-deploy) |
+| — | Public demo on Vercel (`app` + `frontend` services, region `bom1`) | ready to deploy — [§12](#12-public-demo-link-deploy) |
 | — | Site nav: sections at clean paths (`/call`, `/pipeline`, no `#`) | shipped |
 | — | Submission artifacts: demo video, pre-submit check, submission email | pending |
 
@@ -111,12 +112,12 @@ discounts, complaints) in a natural voice conversation.
   └                               └──────────────────────────────────────────────────────┘
 ```
 
-* **Static site:** FastAPI serves the single-file production build of the
-  landing page. On Vercel, `app.frontend()` promotes `frontend/dist` to the
-  CDN at build time; the catch-all below still serves it locally. The clean
-  route `/pipeline` deep-links to the pipeline section because unknown paths
-  fall back to `index.html` and the client router scrolls to the matching
-  section (see [§9](#9-client-side-routing-notes)).
+* **Static site:** the single-file production build of the landing page is
+  served by FastAPI's catch-all locally (`uvicorn`/Docker) and by the
+  `frontend` service (Vite, with an SPA fallback to `index.html`) in the
+  Vercel deployment. The clean route `/pipeline` deep-links to the pipeline
+  section because unknown paths fall back to `index.html` and the client
+  router scrolls to the matching section (see [§9](#9-client-side-routing-notes)).
 * **Voice session:** the same process upgrades a request to a WebSocket for
   duplex audio; all provider API keys stay **server-side** (see
   [§10](#10-environment-variables)). The session state machine, provider
@@ -147,14 +148,14 @@ discounts, complaints) in a natural voice conversation.
 | Tests | pytest + FastAPI TestClient (httpx) | 9.1.1 | TDD suite (hermetic + live) |
 | Runtime | Python / Node | 3.11–3.13 / 22+ | verified on both (Windows + Docker/CI) |
 | Container | Multi-stage Docker (node:22-alpine → python:3.11-slim) | — | containerized run on port 7860 |
-| Hosting | Vercel Functions (Fluid compute, native WebSockets) | — | production deploy, region `bom1` |
+| Hosting | Vercel Services: `app` (FastAPI) + `frontend` (Vite) | — | one project, Fluid WebSockets, region `bom1` |
 
 ## 4. Repository structure
 
 ```
 Aria/
 ├── main.py                  # Vercel Python entrypoint (re-exports backend.main:app)
-├── vercel.json              # fluid:true, region bom1, build, 300 s maxDuration
+├── vercel.json              # services app+frontend, rewrites, fluid, bom1, 300 s
 ├── .vercelignore            #   .env and local clutter never uploaded
 ├── .python-version          #   3.13 (matches CI)
 ├── backend/                 # FastAPI service (server-side only)
@@ -425,33 +426,37 @@ macOS/Linux equivalent: `curl http://localhost:7860/api/health`.
 **Live URL:** `https://<VERCEL_URL>` — filled in after the production deploy;
 the §16 runbook is then re-run against it as the final pre-submit check.
 
-The production deployment runs the whole app as **one Python function on
-Vercel** (FastAPI preset — the entrypoint is the root `main.py`, which
-re-exports `backend.main:app`; no server rewrite). At build time the frontend
-is compiled and `app.frontend()` promotes `dist/` to the CDN; `WS /ws/call`
-streams through Vercel's native WebSocket support. Everything needed is
-committed:
+The production deployment is one Vercel project with **two services**, defined
+in `vercel.json` (Vercel Services) and sharing one domain, one set of
+environment variables and one routing table:
 
-| Setting | Value (from `vercel.json` / repo files) |
-|---|---|
-| Runtime | Python — entrypoint `main.py` → `backend.main:app` |
-| Fluid compute | on (`"fluid": true` — required for WebSockets) |
-| Region | `bom1` (Mumbai) — single region on Hobby |
-| Build command | `cd frontend && npm ci && npm run build` |
-| Function duration | 300 s max (Hobby maximum); the session warns at 270 s and force-ends at 295 s so the summary is sent while the socket is alive |
-| Excluded from the bundle | tests, scripts, docs, logs, local `.env` (`.vercelignore` + `excludeFiles`) |
-| Python version | `.python-version` = 3.13 |
+| Service | Root | Framework | What it is | Public paths |
+|---|---|---|---|---|
+| `app` | `.` — `main.py` → `backend.main:app` | FastAPI | Python function (Fluid, region `bom1`, 300 s max) | `/api/*` and `/ws/*` — services receive the **original** path, so no route rewrites are needed inside the app |
+| `frontend` | `frontend/` | Vite | static build of the site (`dist/`) with an SPA fallback to `index.html` | everything else: `/`, `/call`, `/pipeline`, assets |
+
+Top-level rewrites, most specific first: `/api/(.*)` → `app`,
+`/ws/(.*)` → `app`, then the catch-all `/(.*)` → `frontend`. WebSocket
+upgrades travel through the same rewrites, so `wss://<host>/ws/call` reaches
+FastAPI; WebSockets require Fluid compute (`"fluid": true` — also the default
+for service backends). There are **no service bindings**: the browser talks to
+the backend over the public routes above, and the backend only calls the
+external providers (Deepgram, Groq, Sarvam). Locally nothing changes —
+`uvicorn` + `npm run dev` still run the same code; services are a deploy
+concern only.
 
 Deploy (manual, one time):
 
-1. Import the GitHub repo into Vercel — the FastAPI framework preset is
-   auto-detected (no `/api` prefix, no path rewrite; confirm with step 3).
+1. Import the GitHub repo into Vercel — `vercel.json` supplies the whole
+   build for both services (frameworks `fastapi` and `vite` are declared
+   explicitly).
 2. Project → **Settings → Environment Variables**: add
    `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `SARVAM_API_KEY` for Production and
    Preview (optionally `GROQ_MODEL` / `SARVAM_VOICE`). Paste the values from
    your local `.env` — the file itself is never uploaded.
 3. Project → **Settings → Deployment Protection**: set Authentication to
-   **None** so the production URL is publicly reachable.
+   **None** so the production URL is publicly reachable (the setting applies
+   to the whole shared domain).
 4. Deploy. Verify the deployment with the probes from
    [§7](#7-testing--ci):
 

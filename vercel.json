@@ -2,11 +2,32 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "fluid": true,
   "regions": ["bom1"],
-  "buildCommand": "cd frontend && npm ci && npm run build",
-  "functions": {
-    "main.py": {
-      "maxDuration": 300,
-      "excludeFiles": "{backend/tests/**,backend/scripts/**,docs/**,.playwright-mcp/**,**/__pycache__/**,**/*.log,*.pdf,pdf_extract.txt,start-demo.ps1,start-demo.bat,Dockerfile,.dockerignore}"
+  "services": {
+    "app": {
+      "root": ".",
+      "framework": "fastapi",
+      "entrypoint": "main:app",
+      "functions": {
+        "main.py": {
+          "maxDuration": 300,
+          "excludeFiles": "{backend/tests/**,backend/scripts/**,docs/**,.playwright-mcp/**,**/__pycache__/**,**/*.log,*.pdf,pdf_extract.txt,start-demo.ps1,start-demo.bat,Dockerfile,.dockerignore}"
+        }
+      }
+    },
+    "frontend": {
+      "root": "frontend",
+      "framework": "vite",
+      "installCommand": "npm ci",
+      "buildCommand": "npm run build",
+      "outputDirectory": "dist",
+      "rewrites": [
+        { "source": "/(.*)", "destination": "/index.html" }
+      ]
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": { "service": "app" } },
+    { "source": "/ws/(.*)", "destination": { "service": "app" } },
+    { "source": "/(.*)", "destination": { "service": "frontend" } }
+  ]
 }
