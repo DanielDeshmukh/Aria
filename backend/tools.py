@@ -49,7 +49,7 @@ TOOL_SCHEMAS: list[dict] = [
                 "properties": {
                     "topic": {
                         "type": "string",
-                        "enum": ["shipping", "returns", "cancellation", "cod", "brand"],
+                        "enum": ["shipping", "returns", "cancellation", "cod", "brand", "discounts"],
                     }
                 },
                 "required": ["topic"],

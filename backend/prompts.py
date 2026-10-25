@@ -17,6 +17,7 @@ Shipping policy: {POLICY_TEXT['shipping']}
 Return & refund policy: {POLICY_TEXT['returns']}
 Cancellation policy: {POLICY_TEXT['cancellation']}
 Cash on delivery: {POLICY_TEXT['cod']}
+Discounts & promo codes: {POLICY_TEXT['discounts']}
 Shipping boundary: the policy covers orders above ₹499 (free) and below ₹499 (₹50). For an order of exactly ₹499 the policy does not state a charge, so you cannot confirm the shipping fee for it — say so plainly and never invent a rule.
 
 TOOLS

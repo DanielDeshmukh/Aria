@@ -1,7 +1,9 @@
 """Policy engine — every eligibility decision is computed here, in code.
 
 The LLM only paraphrases these results; it never decides them.
-POLICY_TEXT holds the PDF's brand/policy wording verbatim (source of truth).
+POLICY_TEXT holds the PDF's brand/policy wording verbatim (source of truth),
+plus one derived entry: the PDF states no discount policy, so "discounts"
+records the only non-inventing answer (Aura offers none).
 """
 
 POLICY_TEXT: dict[str, str] = {
@@ -26,6 +28,10 @@ POLICY_TEXT: dict[str, str] = {
     "cod": (
         "COD is available for orders up to ₹2,500. Customers can pay by cash or UPI at "
         "the doorstep."
+    ),
+    "discounts": (
+        "Aura Skincare offers no discounts, promo codes, coupon codes or special price "
+        "exceptions."
     ),
 }
 
