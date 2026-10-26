@@ -7,6 +7,7 @@ All waits are bounded — a regression fails with an event dump, never a hang.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -190,3 +191,97 @@ def test_still_there_fires_once_then_again_after_customer_speaks(
         )
 
     asyncio.run(scenario())
+
+
+# ------------------------------------------------- playback timing (bug 2b)
+def test_playback_done_ignored_while_turn_producing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The client drains its queue BETWEEN two sentences while the server is
+    still producing: that drain must never start the idle countdown."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(rounds=[("text", "First sentence."), ("hang",)])
+        )
+        await to_listening(session, box)
+        with caplog.at_level(logging.INFO, logger="backend.session"):
+            await stt.emit_final("tell me about my order")
+            await wait_until(
+                lambda: box.states()[-1] == "speaking" and box.of("audio"),
+                what="reply audio mid-turn",
+            )
+            await session.handle({"type": "playback_done"})
+            # no transition and no countdown while the turn is producing
+            assert box.states()[-1] == "speaking"
+            assert session._silence_task is None
+        await session.handle({"type": "end"})
+        assert len(box.of("summary")) == 1
+
+    asyncio.run(scenario())
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("playback_done: deferred" in m for m in messages), messages
+
+
+def test_estimate_starts_countdown_without_playback_done(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No playback_done ever arrives: the playback-duration estimate must
+    start the idle countdown - never server send-finish alone."""
+    monkeypatch.setattr(session_mod, "PLAYBACK_MARGIN_SECONDS", 0.1)
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.3)
+    monkeypatch.setattr(session_mod, "SPEECH_FRESH_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(rounds=[("text", "Sure, checking that now.")])
+        )
+        await to_listening(session, box)
+        await stt.emit_final("where is my order")
+        await wait_until(
+            lambda: box.states()[-1] == "speaking" and box.of("audio"),
+            what="reply audio",
+        )
+        # deliberately NO playback_done from the client
+        await wait_until(
+            lambda: box.states()[-1] == "listening"
+            and session._silence_task is not None,
+            what="estimate moved us to listening and armed the countdown",
+            timeout=2.0,
+        )
+        await wait_until(
+            lambda: any(
+                m.get("text") == STILL_THERE for m in box.of("transcript")
+            ),
+            what="nudge after the estimated playback window",
+            timeout=2.0,
+        )
+
+    asyncio.run(scenario())
+
+
+def test_pcm_bytes_per_second_from_tts_config_and_fallback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sample rate/format come from the real TTS output config; 16 kHz only
+    when it is truly unknown - and that fallback is logged."""
+
+    class Configured:
+        mime = "audio/l16;rate=22050"
+
+    assert session_mod._pcm_bytes_per_second(Configured) == 44100.0
+
+    class WithAttr:
+        sample_rate = 16000
+        mime = "application/octet-stream"
+
+    assert session_mod._pcm_bytes_per_second(WithAttr) == 32000.0
+
+    class Bare:
+        mime = "audio/wav"
+
+    with caplog.at_level(logging.INFO, logger="backend.session"):
+        assert session_mod._pcm_bytes_per_second(Bare) == 32000.0
+    assert any(
+        "assuming 16000" in r.getMessage() for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]

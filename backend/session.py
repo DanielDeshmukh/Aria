@@ -34,12 +34,30 @@ LLM_TROUBLE = (
     "Sorry, I'm having a little trouble, could you say that again in a moment?"
 )
 SILENCE_SECONDS = 9.0
+# After Aria's own closing offer ("anything else I can help with?") the
+# customer gets a longer, polite window - and when it expires the call ends
+# quietly (summary + ended) instead of nudging them about a question Aria
+# already asked.
+CLOSING_IDLE_SECONDS = 15.0
 # The nudge must never fire while the customer is talking: interims restart
 # the 9 s countdown, and a fire additionally requires this much quiet since
 # the last speech signal (non-empty interim, non-empty final, or
 # SpeechStarted). 3 s keeps "Are you still there?" at least a few seconds
 # after the last transcript fragment (mid-sentence finals included).
 SPEECH_FRESH_SECONDS = 3.0
+# Client playback can lag server send-finish by a frame or two; when no
+# playback_done arrives, the idle countdown starts this long after the audio
+# has (estimated) finished playing.
+PLAYBACK_MARGIN_SECONDS = 1.5
+# Only used when the TTS output config exposes no usable sample rate - see
+# _pcm_bytes_per_second (Sarvam's config gives 16000, so this is rare).
+FALLBACK_SAMPLE_RATE = 16000
+# Aria's closing offer - detected on the way out of _speak.
+_CLOSING_OFFER_RE = re.compile(
+    r"\banything else\b|\belse can i help\b|\belse i can help\b|\belse you need\b"
+    r"|\belse i can do\b|\bfurther questions\b",
+    re.I,
+)
 LOW_CONFIDENCE = 0.55
 INTERIM_MIN_INTERVAL = 0.2
 # Low-confidence finals are normally discarded, except two safe shapes:
@@ -88,6 +106,36 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
+def _pcm_bytes_per_second(tts: Any) -> float:
+    """Bytes per second of the TTS output, for the playback-duration estimate.
+
+    Sample rate and format come from the REAL TTS output config: an explicit
+    sample_rate/speech_sample_rate attribute first, then the `rate=` parameter
+    of the mime type (Sarvam advertises `audio/l16;rate=16000`, i.e. linear16
+    = 2 bytes/sample). 16 kHz is assumed ONLY when neither is usable, and that
+    fallback is logged so an unexpected config is never silent."""
+    rate: int | None = None
+    for attr in ("sample_rate", "speech_sample_rate"):
+        value = getattr(tts, attr, None)
+        if isinstance(value, (int, float)) and value > 0:
+            rate = int(value)
+            break
+    if rate is None:
+        match = re.search(r"rate=(\d+)", str(getattr(tts, "mime", "") or ""))
+        if match:
+            rate = int(match.group(1))
+    if rate is None:
+        logger.info(
+            "playback estimate: TTS sample rate not in output config "
+            "(mime=%r) - assuming %d Hz",
+            getattr(tts, "mime", None),
+            FALLBACK_SAMPLE_RATE,
+        )
+        rate = FALLBACK_SAMPLE_RATE
+    # linear16/PCM16 mono: 2 bytes per sample (Sarvam's output_audio_codec).
+    return float(rate * 2)
+
+
 class CallSession:
     def __init__(self, stt: Any, llm: Any, tts: Any, send: SendFn) -> None:
         self.stt = stt
@@ -102,6 +150,7 @@ class CallSession:
         self._closing = False
         self._turn_task: asyncio.Task | None = None
         self._silence_task: asyncio.Task | None = None
+        self._estimate_task: asyncio.Task | None = None
         self._turn_started = time.monotonic()
         self._stats_sent = False
         self._tool_lookup_ms: float | None = None
@@ -111,8 +160,17 @@ class CallSession:
         self._pending_final = ""
         self._hold_task: asyncio.Task | None = None
         self._still_there_sent = False
+        self._closing_offer = False
+        self._last_playback_done_at = 0.0
         self._warn_handle: asyncio.TimerHandle | None = None
         self._end_handle: asyncio.TimerHandle | None = None
+        # Tool outcomes recorded for the post-call summary fallback (facts,
+        # never raw transcript lines) - see _execute_tool.
+        self.tool_log: list[dict] = []
+        # PCM byte accounting for the playback-duration estimate.
+        self._audio_bytes_sent = 0
+        self._audio_bytes_acked = 0
+        self._bytes_per_sec: float | None = None
 
     # ------------------------------------------------------------------ wire
     async def handle(self, msg: Any) -> None:
@@ -137,6 +195,7 @@ class CallSession:
         await self._cancel_turn()
         self._cancel_silence()
         self._cancel_hold()
+        self._cancel_estimate()
         for closer in (self.stt, self.tts):
             try:
                 await closer.close()
@@ -191,10 +250,22 @@ class CallSession:
     ) -> None:
         if self._closing or self._ended or not self._started:
             return
+        since_playback = (
+            time.monotonic() - self._last_playback_done_at
+            if self._last_playback_done_at
+            else -1.0
+        )
         if not is_final:
             text = (text or "").strip()
             now = time.monotonic()
             if text:
+                logger.info(
+                    "stt interim: conf=%s text=%r state=%s since_playback_done=%.2fs",
+                    confidence,
+                    text,
+                    self.state,
+                    since_playback,
+                )
                 # Interims stream while the customer talks: mark the speech
                 # and restart the idle countdown so "still there?" can never
                 # fire mid-sentence (finals alone arrive too late).
@@ -205,10 +276,19 @@ class CallSession:
                     # the customer resumed mid-fragment: keep the join window
                     # open so the next final completes the sentence
                     self._arm_hold()
-            # Deepgram does not emit SpeechStarted on our live config; a real
-            # interim during our audio is the reliable barge-in signal.
-            if text and self.state in ("speaking", "thinking"):
-                await self._on_speech_start()
+                # Deepgram does not emit SpeechStarted on our live config; a
+                # real interim during our audio is the reliable barge-in signal.
+                if self.state in ("speaking", "thinking"):
+                    await self._on_speech_start()
+            else:
+                # Deepgram also sends empty interims; logged so a lost reply
+                # can be reconstructed from the log line by line.
+                logger.debug(
+                    "stt interim: empty conf=%s state=%s since_playback_done=%.2fs",
+                    confidence,
+                    self.state,
+                    since_playback,
+                )
             if now - self._last_interim_at >= INTERIM_MIN_INTERVAL:
                 self._last_interim_at = now
                 await self.send(
@@ -222,12 +302,29 @@ class CallSession:
             return
         text = (text or "").strip()
         if not text:
+            logger.info(
+                "stt gate: empty final ignored state=%s since_playback_done=%.2fs",
+                self.state,
+                since_playback,
+            )
             return
+        logger.info(
+            "stt final: conf=%s text=%r state=%s since_playback_done=%.2fs",
+            confidence,
+            text,
+            self.state,
+            since_playback,
+        )
         # A non-empty final is the last transcript fragment of an utterance
         # (endpointing can cut mid-sentence): count it as fresh speech so the
         # nudge cannot fire a moment after the finalisation. Empty finals are
         # ignored on purpose — Deepgram emits them throughout pure silence
         # (test_still_there_fires_despite_empty_finals).
+        if self._closing_offer:
+            logger.info(
+                "customer replied after the closing offer - normal idle window"
+            )
+            self._closing_offer = False
         self._last_user_speech_at = time.monotonic()
         self._cancel_silence()
         self._still_there_sent = False
@@ -239,10 +336,17 @@ class CallSession:
             # A final in a script outside Latin/Devanagari (the language=multi
             # Telugu mis-detection): never act on it — same canned path as
             # low confidence, no LLM turn.
+            logger.info("stt gate: foreign script -> repeat (text=%r)", text)
             await self._canned_speak(REPEAT)
             return
         if not self._final_acceptable(text, confidence):
             # Unclear audio: never act on it, canned repeat instead.
+            logger.info(
+                "stt gate: low confidence %s < %.2f -> repeat (text=%r)",
+                confidence,
+                LOW_CONFIDENCE,
+                text,
+            )
             await self._canned_speak(REPEAT)
             return
         # Fragment coalescing: join with a held fragment (or refine it) before
@@ -256,11 +360,14 @@ class CallSession:
                 joined = pending  # stale shorter duplicate
             else:
                 joined = f"{pending} {text}"  # true mid-utterance split
+            logger.info("stt gate: joined held fragment -> %r", joined)
         if self._looks_incomplete(joined):
+            logger.info("stt gate: incomplete final held (%r)", joined)
             self._pending_final = joined
             self._arm_hold()
             return
         self._cancel_hold()
+        logger.info("stt gate: accepted -> turn (final=%r)", joined)
         await self._start_turn(user_text=joined)
 
     def _final_acceptable(self, text: str, confidence: float | None) -> bool:
@@ -350,6 +457,9 @@ class CallSession:
     async def _on_speech_start(self) -> None:
         if self._closing or self._ended or not self._started:
             return
+        logger.info(
+            "stt speech-start: marking fresh speech, state=%s", self.state
+        )
         self._last_user_speech_at = time.monotonic()
         if self.state in ("speaking", "thinking"):
             await self._cancel_turn()
@@ -363,9 +473,27 @@ class CallSession:
     async def _on_playback_done(self) -> None:
         if self._closing or self._ended or not self._started:
             return
-        if self.state == "speaking":
-            await self._set_state("listening")
-            self._arm_silence()
+        self._last_playback_done_at = time.monotonic()
+        # The client drains its queue whenever the last buffered chunk plays -
+        # including a gap BETWEEN two sentences while the server is still
+        # producing. The bytes really did play, so ack them; but never start
+        # the idle countdown from a drain that happened mid-turn (that is the
+        # bogus 9 s nudge). The countdown then starts on the NEXT real
+        # playback_done or on the duration estimate, never on send-finish.
+        self._audio_bytes_acked = self._audio_bytes_sent
+        if self.state != "speaking":
+            logger.debug("playback_done: ignored (state=%s)", self.state)
+            return
+        if self._turn_task is not None and not self._turn_task.done():
+            logger.info(
+                "playback_done: deferred - turn still producing (state=%s)",
+                self.state,
+            )
+            return
+        self._cancel_estimate()
+        logger.info("playback_done: accepted -> listening (idle countdown armed)")
+        await self._set_state("listening")
+        self._arm_silence()
 
     async def _end(self) -> None:
         if self._ended or self._closing:
@@ -375,14 +503,19 @@ class CallSession:
         await self._cancel_turn()
         self._cancel_silence()
         self._cancel_hold()
+        self._cancel_estimate()
         try:
             await self.stt.close()
         except Exception:
             pass
         try:
-            summary = await build_summary(self.llm, self.transcript)
+            summary = await build_summary(
+                self.llm, self.transcript, self.tool_log
+            )
         except Exception:
-            summary = fallback_summary(self.transcript)
+            # build_summary logs its own reasons; this is the last resort.
+            logger.exception("summary build raised - using structured fallback")
+            summary = fallback_summary(self.transcript, self.tool_log)
         await self.send(
             {
                 "type": "summary",
@@ -463,14 +596,35 @@ class CallSession:
             await self._canned_speak(LLM_TROUBLE)
             return
         if self.state == "thinking":
+            # no audio was produced at all - nothing to wait for
             await self._set_state("listening")
             self._arm_silence()
+        elif self.state == "speaking":
+            if self._audio_bytes_acked >= self._audio_bytes_sent:
+                # the client already drained everything we sent (its
+                # playback_done was deferred while we were producing)
+                logger.info(
+                    "turn end: client already drained the audio -> listening"
+                )
+                await self._set_state("listening")
+                self._arm_silence()
+            else:
+                # real audio is still playing: wait for playback_done, with
+                # the duration estimate as the fallback
+                self._schedule_estimate()
 
     def _execute_tool(self, name: str, args: dict) -> dict:
-        """dispatch() plus capture of the lookup timing for the stats event."""
+        """dispatch() plus capture of the lookup timing for the stats event
+        and of the tool outcome for the post-call summary facts."""
         result = tools_mod.dispatch(name, args)
         if name == "get_order_details":
             self._tool_lookup_ms = tools_mod.last_lookup_ms()
+        try:
+            self.tool_log.append(
+                {"name": name, "args": dict(args), "result": result}
+            )
+        except Exception:
+            logger.debug("tool_log append failed", exc_info=True)
         return result
 
     async def _flush(self, buffer: str, final: bool = False) -> str:
@@ -490,6 +644,14 @@ class CallSession:
     async def _speak(self, text: str) -> None:
         if self._closing or self._ended:
             return
+        if _CLOSING_OFFER_RE.search(text):
+            # Aria just offered to close: the customer then gets a longer,
+            # polite window - and no "still there?" when it expires.
+            self._closing_offer = True
+            logger.info(
+                "closing offer detected - idle window is now %.0fs",
+                CLOSING_IDLE_SECONDS,
+            )
         if text.rstrip().endswith("?"):
             # remembered for the low-confidence yes/no gate (issue 3): a short
             # "yes"/"no" after a confirmation question is accepted below
@@ -517,6 +679,11 @@ class CallSession:
         except Exception as e:
             await self._fail(f"text-to-speech unavailable: {type(e).__name__}")
             return
+        # The sentence is fully sent: arm the playback-duration estimate so
+        # the idle countdown starts on playback (or estimate), never on
+        # send-finish alone.
+        if self.state == "speaking":
+            self._schedule_estimate()
 
     async def _emit_audio(self, chunk: bytes) -> bool:
         """Send one PCM chunk; stats/state ride on the first one.
@@ -528,6 +695,7 @@ class CallSession:
             await self._send_stats()
         if self.state != "speaking":
             await self._set_state("speaking")
+        self._audio_bytes_sent += len(chunk)
         await self.send(
             {"type": "audio", "mime": self.tts.mime, "data": _b64(chunk)}
         )
@@ -544,18 +712,74 @@ class CallSession:
         await self.send(payload)
 
     async def _set_state(self, state: str) -> None:
+        if state != "speaking":
+            # leaving the playing state: no more audio can arrive for this
+            # utterance (playback_done or barge-in), so ack what was sent and
+            # drop the estimate.
+            self._audio_bytes_acked = self._audio_bytes_sent
+            self._cancel_estimate()
         self.state = state
         await self.send({"type": "state", "state": state})
+
+    # -------------------------------------------------------- playback timing
+    def _schedule_estimate(self) -> None:
+        """Arm the playback-duration fallback: if no playback_done arrives,
+        the idle countdown starts PLAYBACK_MARGIN_SECONDS after the audio we
+        sent is estimated to have finished playing. The sample rate/format
+        come from the TTS output config (see _pcm_bytes_per_second)."""
+        self._cancel_estimate()
+        if self._closing or self._ended or self.state != "speaking":
+            return
+        if self._bytes_per_sec is None:
+            self._bytes_per_sec = _pcm_bytes_per_second(self.tts)
+        unsent = max(0, self._audio_bytes_sent - self._audio_bytes_acked)
+        delay = unsent / self._bytes_per_sec + PLAYBACK_MARGIN_SECONDS
+        logger.info(
+            "playback estimate: no playback_done yet - arming in %.2fs "
+            "(unsent_bytes=%d)",
+            delay,
+            unsent,
+        )
+        self._estimate_task = asyncio.create_task(self._estimate_fire(delay))
+
+    async def _estimate_fire(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        self._estimate_task = None
+        if self._closing or self._ended or self.state != "speaking":
+            return
+        if self._turn_task is not None and not self._turn_task.done():
+            # more audio may still come from this turn; re-check later
+            logger.info(
+                "playback estimate: turn still producing - rearming"
+            )
+            self._schedule_estimate()
+            return
+        logger.info(
+            "playback estimate: %.2fs elapsed without playback_done -> listening",
+            delay,
+        )
+        await self._set_state("listening")
+        self._arm_silence()
+
+    def _cancel_estimate(self) -> None:
+        task = self._estimate_task
+        self._estimate_task = None
+        if task and task is not asyncio.current_task() and not task.done():
+            task.cancel()
 
     def _arm_silence(self) -> None:
         self._cancel_silence()
         if self._still_there_sent or self._ended or self._closing:
             return
-        self._silence_task = asyncio.create_task(self._silence_fire())
+        window = CLOSING_IDLE_SECONDS if self._closing_offer else SILENCE_SECONDS
+        self._silence_task = asyncio.create_task(self._silence_fire(window))
 
-    async def _silence_fire(self) -> None:
+    async def _silence_fire(self, window: float) -> None:
         try:
-            await asyncio.sleep(SILENCE_SECONDS)
+            await asyncio.sleep(window)
         except asyncio.CancelledError:
             return
         if self._closing or self._ended or self._still_there_sent:
@@ -566,7 +790,17 @@ class CallSession:
             # interrupt
             self._arm_silence()
             return
+        if self._closing_offer:
+            # Aria already asked whether there is anything else; after the
+            # longer window the call ends quietly - no nudge.
+            logger.info(
+                "closing-offer idle window (%.0fs) elapsed - ending call quietly",
+                window,
+            )
+            await self._end()
+            return
         self._still_there_sent = True
+        logger.info("idle %.1fs with no speech - speaking the nudge", window)
         try:
             await self._speak(STILL_THERE)
         except Exception as e:

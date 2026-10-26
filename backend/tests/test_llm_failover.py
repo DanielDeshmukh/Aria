@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import types
 
 import httpx
 import openai
@@ -151,3 +152,81 @@ def test_approx_tokens_tracks_chars_over_four() -> None:
     assert approx_tokens(4) == 1
     assert approx_tokens(5) == 2
     assert approx_tokens(1000) == 250
+
+# ---------------------------------------------------- complete() model chain
+def make_llm_complete(
+    monkeypatch: pytest.MonkeyPatch, script: list, chain: tuple = ("model-a", "model-b")
+) -> tuple[GroqLLM, list[str]]:
+    """complete() is non-streaming: each attempt pops the next step - an
+    Exception instance is raised, a str is returned as the completion."""
+
+    def scripted_complete(script: list, calls: list[str]):
+        async def fake_create(**kwargs):
+            assert kwargs.get("response_format") == {"type": "json_object"}
+            calls.append(kwargs["model"])
+            step = script.pop(0)
+            if isinstance(step, Exception):
+                raise step
+            message = types.SimpleNamespace(content=step)
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message=message)]
+            )
+
+        return fake_create
+
+    monkeypatch.setattr(llm_mod, "RETRY_BACKOFF_SECONDS", 0.0)
+    llm = GroqLLM()
+    llm.models = list(chain)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        llm._client.chat.completions, "create", scripted_complete(script, calls)
+    )
+    return llm, calls
+
+
+def test_complete_retries_429_once_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm_complete(monkeypatch, [rate_limit(), '{"ok": 1}'])
+    out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert out == '{"ok": 1}'
+    assert calls == ["model-a", "model-a"]  # one retry, same model
+
+
+def test_complete_falls_through_to_fallback_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm_complete(
+        monkeypatch, [rate_limit(), rate_limit(), '{"ok": 2}']
+    )
+    out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert out == '{"ok": 2}'
+    assert calls == ["model-a", "model-a", "model-b"]  # retry, then chain
+
+
+def test_complete_chain_exhausted_raises_llm_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm_complete(monkeypatch, [rate_limit()] * 4)
+    with pytest.raises(LLMUnavailableError):
+        asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert len(calls) == 4  # 2 attempts x 2 models
+
+
+def test_complete_non_429_switches_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm_complete(monkeypatch, [server_error(), '{"ok": 3}'])
+    out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert out == '{"ok": 3}'
+    assert calls == ["model-a", "model-b"]  # 500: no retry, straight to chain
+
+
+def test_complete_logs_which_model_answered(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    llm, _ = make_llm_complete(monkeypatch, ['{"ok": 4}'])
+    with caplog.at_level(logging.INFO, logger="backend.llm"):
+        asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    records = [r.getMessage() for r in caplog.records]
+    assert any("groq summary: model=model-a" in m for m in records), records

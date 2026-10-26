@@ -252,13 +252,62 @@ class GroqLLM:
         )
 
     async def complete(self, messages: list[dict]) -> str:
-        """One-shot non-streaming completion (used by the summarizer)."""
-        resp = await self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=0.2,
-            max_completion_tokens=600,
-            response_format={"type": "json_object"},
-            reasoning_effort="low",
+        """One-shot non-streaming completion (used by the summarizer).
+
+        Walks the SAME fallback chain as chat(): one 429 backoff retry per
+        model, then the next model, LLMUnavailableError once the chain is
+        exhausted. Before this, a rate limit at call end silently produced the
+        deterministic summary fallback - the exact bug this chain fixes.
+        """
+        last_error: Exception | None = None
+        for model in self.models:
+            retried_429 = False
+            while True:
+                try:
+                    resp = await self._client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=0.2,
+                        max_completion_tokens=600,
+                        response_format={"type": "json_object"},
+                        reasoning_effort="low",
+                    )
+                    content = resp.choices[0].message.content or ""
+                    logger.info(
+                        "groq summary: model=%s chars=%d", model, len(content)
+                    )
+                    return content
+                except asyncio.CancelledError:
+                    raise
+                except openai.RateLimitError as exc:
+                    last_error = exc
+                    if not retried_429:
+                        retried_429 = True
+                        logger.warning(
+                            "groq 429 on %s (summary) - retrying once in %.1fs",
+                            model,
+                            RETRY_BACKOFF_SECONDS,
+                        )
+                        await asyncio.sleep(RETRY_BACKOFF_SECONDS)
+                        continue
+                    logger.warning(
+                        "groq 429 persists on %s (summary) - switching model", model
+                    )
+                    break
+                except openai.APIError as exc:
+                    last_error = exc
+                    logger.warning(
+                        "groq %s on %s (summary) - switching model",
+                        type(exc).__name__,
+                        model,
+                    )
+                    break
+        detail = (
+            f"{type(last_error).__name__}: {last_error}" if last_error else "no models"
         )
-        return resp.choices[0].message.content or ""
+        logger.error(
+            "groq summary failed on all %d model(s) in the chain: %s",
+            len(self.models),
+            detail,
+        )
+        raise LLMUnavailableError(f"summary model chain failed: {detail}") from last_error

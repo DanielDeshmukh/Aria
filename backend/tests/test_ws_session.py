@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import time
 
 import pytest
@@ -672,3 +673,142 @@ def test_refined_final_replaces_held_prefix() -> None:
         assert session.messages[-1]["content"] == "where is my order ORD-101"
 
     asyncio.run(scenario())
+
+
+# --------------------------------------------- nudge freshness (bug 2c)
+def test_nudge_blocked_by_gate_dropped_final(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gate-dropped final (low confidence -> canned repeat) still counts as
+    STT activity: the nudge must stay away for SPEECH_FRESH_SECONDS."""
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.2)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("sor y w at", 0.2)  # dropped -> canned repeat
+        await wait_until(
+            lambda: any(m.get("text") == REPEAT for m in box.of("transcript")),
+            what="canned repeat",
+        )
+        await session.handle({"type": "playback_done"})  # repeat drained
+        await asyncio.sleep(0.35)  # > SILENCE 0.2, << SPEECH_FRESH 3.0
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "nudge fired within the fresh window of a gate-dropped final"
+        assert llm.chat_calls == 0
+
+    asyncio.run(scenario())
+
+
+# ------------------------------------------------ closing offer (bug 2d)
+def test_closing_offer_ends_quietly_after_longer_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After Aria's closing offer the customer gets CLOSING_IDLE_SECONDS, and
+    the call then ends quietly - summary + ended, never a nudge."""
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.1)
+    monkeypatch.setattr(session_mod, "CLOSING_IDLE_SECONDS", 0.5)
+    monkeypatch.setattr(session_mod, "SPEECH_FRESH_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                rounds=[("text", "Is there anything else I can help you with?")]
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("thanks that is everything")
+        await wait_until(
+            lambda: any(
+                "anything else" in (m.get("text") or "")
+                for m in box.of("transcript")
+            ),
+            what="closing offer spoken",
+        )
+        assert session._closing_offer is True
+        await session.handle({"type": "playback_done"})
+        await asyncio.sleep(0.25)  # the SHORT window (0.1 s) would have nudged
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "nudge fired inside the longer closing window"
+        await wait_until(
+            lambda: box.states()[-1] == "ended",
+            what="quiet end after the closing window",
+            timeout=2.0,
+        )
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "the quiet end must never speak STILL_THERE"
+        assert len(box.of("summary")) == 1
+
+    asyncio.run(scenario())
+
+
+def test_closing_flag_clears_on_new_customer_final() -> None:
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                rounds=[("text", "Anything else I can help you with?")],
+                advance=True,
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("one more thing please")
+        await wait_until(
+            lambda: any(
+                "Anything else" in (m.get("text") or "")
+                for m in box.of("transcript")
+            ),
+            what="closing offer spoken",
+        )
+        await session.handle({"type": "playback_done"})
+        assert session._closing_offer is True
+        await stt.emit_final("actually no thank you")
+        await wait_until(
+            lambda: session._closing_offer is False and llm.chat_calls == 2,
+            what="closing flag cleared and the second turn ran",
+        )
+
+    asyncio.run(scenario())
+
+
+# ------------------------------------------------------ STT logging (2a)
+def test_stt_final_and_gate_decision_logged_with_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        with caplog.at_level(logging.INFO, logger="backend.session"):
+            await stt.emit_final("sor y w at", 0.2)
+            await wait_until(
+                lambda: any(m.get("text") == REPEAT for m in box.of("transcript")),
+                what="canned repeat",
+            )
+
+    asyncio.run(scenario())
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "stt final" in m and "sor y w at" in m and "conf=0.2" in m
+        for m in messages
+    ), messages
+    assert any(
+        "stt gate" in m and "low confidence" in m for m in messages
+    ), messages
+
+
+def test_empty_final_gate_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """Empty finals were invisible before (silent early return) - they must
+    show up in the log with their reason."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        with caplog.at_level(logging.INFO, logger="backend.session"):
+            await stt.emit_final("")  # Deepgram silence chatter
+            await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("empty final ignored" in m for m in messages), messages
