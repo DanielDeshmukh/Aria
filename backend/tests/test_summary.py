@@ -287,6 +287,46 @@ def test_build_passes_tool_log_to_the_llm_prompt() -> None:
     assert "ORD-102" in prompt
 
 
+def test_build_prompt_trims_to_last_12_turns_with_tool_facts() -> None:
+    # The summary request must stay tiny (15:39: chat had just burned the
+    # TPM budget): only the last 12 turns + compact tool facts reach the
+    # LLM, never the full transcript or the raw result payloads.
+    llm = FakeLLM(
+        '{"customer_intent": "ORDER_TRACKING", "order_id": "ORD-102", '
+        '"resolution_status": "RESOLVED", "call_summary": "ok"}'
+    )
+    transcript = [
+        {"role": "customer" if i % 2 == 0 else "agent", "text": f"line-{i} " + "w" * 60}
+        for i in range(40)
+    ]
+    big_result = {
+        "found": True,
+        "order": {
+            "id": "ORD-102",
+            "status": "DELIVERED",
+            "product": "Serum " + "p" * 800,
+        },
+        "flags": {"return_eligible": False, "return_reason": "outside the window"},
+    }
+    tool_log = [tool_entry("get_order_details", {"order_id": "ORD-102"}, big_result)]
+    s = asyncio.run(build_summary(llm, transcript, tool_log))
+    assert set(SUMMARY_KEYS) <= set(s)
+    assert s["order_id"] == "ORD-102"  # facts/fallback still see FULL data
+
+    prompt = llm.messages[-1]["content"]
+    assert "line-27" not in prompt  # trimmed (last 12 turns = 28..39)
+    assert "line-28" in prompt and "line-39" in prompt
+    assert "earlier turns omitted" in prompt
+    assert "Tool calls made during the call" in prompt  # header kept
+    assert "get_order_details" in prompt and "status=DELIVERED" in prompt
+    assert "return_eligible=False" in prompt
+    assert "Serum " + "p" * 50 not in prompt  # raw payload never reaches the LLM
+
+    # whole request well under 1.5k tokens (~4 chars/token -> 6k chars)
+    total_chars = len(llm.messages[0]["content"]) + len(prompt)
+    assert total_chars <= 6000, total_chars
+
+
 @pytest.mark.skipif(
     not __import__("backend.config", fromlist=["get_settings"]).get_settings().groq_api_key,
     reason="GROQ_API_KEY not set",

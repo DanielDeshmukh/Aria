@@ -66,7 +66,7 @@ def test_summary_path_uses_the_same_zero_retry_client(
     assert llm._client.max_retries == 0
     out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
     assert out == '{"ok": 1}'
-    assert calls == ["model-a"]  # exactly one request, no hidden SDK retries
+    assert len(calls) == 1  # exactly one request, no hidden SDK retries
 
 
 # ------------------------------------------------------------ circuit breaker
@@ -143,23 +143,73 @@ def test_all_models_cooling_still_attempts_the_full_chain(
 # --------------------------------------------------------- prompt accounting
 
 
+def _sdk_chunk(raw: dict):
+    """Parse a raw chunk exactly the way production does - the OpenAI SDK
+    hands ChatCompletionChunk objects to _chunk_usage, not dicts (top-level
+    usage becomes a CompletionUsage pydantic object)."""
+    from openai.types.chat import ChatCompletionChunk
+
+    return ChatCompletionChunk.model_validate(raw)
+
+
 def test_turn_logs_real_api_usage_from_the_stream(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # Groq's real numbers (median ~1,850 prompt tok/request) arrive in the
-    # final stream chunk when include_usage is set - the log must use them,
-    # not chars/4.
-    usage = {
-        "choices": [],
-        "usage": {"prompt_tokens": 1850, "completion_tokens": 42},
-    }
-    llm, _ = make_llm(monkeypatch, [text_step("Hi there.") + [usage]])
+    # Groq's real numbers (median ~1,850 prompt tok/request) arrive on the
+    # final chunk as a top-level usage object parsed by the SDK - the 15:39
+    # incident showed this path silently degrading to chars/4 when the
+    # parser gated on isinstance(dict).
+    chunk = _sdk_chunk(
+        {
+            "id": "c1",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "m",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 1850,
+                "completion_tokens": 42,
+                "total_tokens": 1892,
+            },
+        }
+    )
+    llm, _ = make_llm(monkeypatch, [text_step("Hi there.") + [chunk]])
     with caplog.at_level(logging.INFO, logger="backend.llm"):
         events = asyncio.run(collect(llm))
     assert events[-1]["approx_tokens"] == 1850 + 42  # real, not chars/4
     line = next(r.getMessage() for r in caplog.records if "groq turn" in r.getMessage())
     assert "[groq usage]" in line, line
     assert "prompt=1850" in line and "completion=42" in line, line
+    assert "chars/4 estimate" not in line
+
+
+def test_usage_is_read_from_x_groq_when_top_level_is_absent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Groq's own documented slot: x_groq.usage on the dedicated choices:[]
+    # chunk streamed just before [DONE] (stream_options.include_usage).
+    chunk = _sdk_chunk(
+        {
+            "id": "c2",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "m",
+            "choices": [],
+            "x_groq": {
+                "usage": {
+                    "prompt_tokens": 900,
+                    "completion_tokens": 20,
+                    "total_tokens": 920,
+                }
+            },
+        }
+    )
+    llm, _ = make_llm(monkeypatch, [text_step("Hi there.") + [chunk]])
+    with caplog.at_level(logging.INFO, logger="backend.llm"):
+        events = asyncio.run(collect(llm))
+    assert events[-1]["approx_tokens"] == 920
+    line = next(r.getMessage() for r in caplog.records if "groq turn" in r.getMessage())
+    assert "[groq usage]" in line and "prompt=900" in line, line
     assert "chars/4 estimate" not in line
 
 
@@ -213,6 +263,7 @@ def test_summary_skipped_when_entire_chain_is_cooling(
 ) -> None:
     llm = GroqLLM()
     llm.models = ["model-a", "model-b"]
+    llm.summary_model = ""  # default resolves to models[1]; keep it deterministic
     now = time.monotonic()
     llm._cooldowns = {"model-a": now + 60, "model-b": now + 60}
     called: list = []
@@ -238,3 +289,50 @@ def test_summary_avoids_a_cooled_model_and_uses_the_fallback(
     out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
     assert out == '{"ok": 1}'
     assert calls == ["model-b"]  # straight to the fallback, primary skipped
+
+
+def test_summary_starts_on_the_fallback_model_while_the_primary_is_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The live chat serves model-a; its TPM budget was just spent BY the
+    # call (15:39 incident). The summary must go to the model with headroom
+    # first even though the primary is NOT in cooldown.
+    llm, calls = make_llm_complete(monkeypatch, ['{"ok": 1}'])
+    out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert out == '{"ok": 1}'
+    assert calls == ["model-b"]  # fallback first; primary untouched
+    assert "model-a" not in calls
+
+
+def test_configured_summary_model_wins_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm_complete(monkeypatch, ['{"ok": 1}'])
+    llm.summary_model = "model-x"  # GROQ_SUMMARY_MODEL=model-x
+    asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert calls == ["model-x"]
+
+
+def test_summary_never_retries_the_model_that_just_429d(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 429 -> breaker opens -> NEXT model immediately: no 0.5 s same-model
+    # sleep (the 6 s end budget is too precious) and never a second hit on
+    # the model that just rate-limited us.
+    llm, calls = make_llm_complete(monkeypatch, [rate_limit(), rate_limit()])
+    with caplog.at_level(logging.WARNING, logger="backend.llm"):
+        with pytest.raises(LLMUnavailableError):
+            asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert calls == ["model-b", "model-a"]  # each exactly once
+    assert "model-b" in llm._cooldowns and "model-a" in llm._cooldowns
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("not retrying it" in m for m in messages), messages
+
+
+def test_summary_reaches_the_chat_primary_only_as_last_resort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm_complete(monkeypatch, ['{"ok": 1}'])
+    llm._cooldowns["model-b"] = time.monotonic() + 60  # fallback cooling
+    asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
+    assert calls == ["model-a"]  # primary enters only when headroom models are out

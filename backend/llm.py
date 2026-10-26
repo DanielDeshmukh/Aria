@@ -2,15 +2,19 @@
 
 Resilience: the SDK's built-in retries are DISABLED (max_retries=0) so a 429
 can never make the SDK sleep ~52 s inside an awaited handler - the incident
-that hung the end-of-call path. Only this module handles 429s: one short
-backoff retry per model, a 60 s circuit breaker per rate-limited model
-(Retry-After capped at 60 s) so subsequent turns go straight to the fallback
-chain, then LLMUnavailableError when the chain fails (including "every model
-is cooling down", which skips the summary request entirely so the session
-falls straight back to the deterministic summary). Every completed turn logs
-the model that answered with the API's REAL usage numbers (stream_options
-include_usage; chars/4 only as a labelled fallback) plus a chars breakdown of
-what the prompt was made of (system/tools/history/tool_results).
+that hung the end-of-call path. Only this module handles 429s: chat() makes
+one short backoff retry per model, a 60 s circuit breaker per rate-limited
+model (Retry-After capped at 60 s) so subsequent turns go straight to the
+fallback chain, then LLMUnavailableError when the chain fails. The SUMMARY
+request rides a different order: GROQ_SUMMARY_MODEL (default = the fallback
+model) first, other non-primary models next, the live-chat primary last -
+and it never retries the model that just 429'd (TPM headroom matters more
+than a second hit); when every candidate is cooling the request is skipped
+entirely so the session falls straight back to the deterministic summary.
+Every completed turn logs the model that answered with the API's REAL usage
+numbers (Groq puts usage on the final stream chunk under x_groq.usage, or a
+top-level usage object; chars/4 only as a labelled fallback) plus a chars
+breakdown of what the prompt was made of (system/tools/history/tool_results).
 
 Pure helpers `feed_chunk` / `finalize_round` / `prompt_breakdown` are
 unit-tested without a key. Key access is via backend.config only (repr-safe).
@@ -59,16 +63,23 @@ def _o(obj: Any, key: str, default: Any = None) -> Any:
 
 def _chunk_usage(chunk: Any) -> tuple[int, int] | None:
     """(prompt_tokens, completion_tokens) from a stream chunk, if present.
-    Emitted by Groq only when stream_options.include_usage is set - the final
-    chunk before [DONE] carries usage (top-level, or under x_groq.usage)."""
-    usage = _o(chunk, "usage") or _o(_o(chunk, "x_groq"), "usage")
-    if not isinstance(usage, dict):
-        return None
-    prompt = usage.get("prompt_tokens")
-    completion = usage.get("completion_tokens")
-    if prompt is None and completion is None:
-        return None
-    return (int(prompt or 0), int(completion or 0))
+
+    Per Groq's chunk schema, usage rides the FINAL chunk under x_groq.usage
+    (and on the dedicated choices:[] chunk before [DONE] when
+    stream_options.include_usage is set); a top-level usage may appear too -
+    there the OpenAI SDK parses it into a pydantic CompletionUsage OBJECT,
+    so both locations must be read by attribute, never gated on isinstance
+    (that gate silently dropped real production usage - the 15:39 incident
+    logged chars/4 despite Groq sending the numbers)."""
+    for usage in (_o(chunk, "usage"), _o(_o(chunk, "x_groq"), "usage")):
+        if usage is None:
+            continue
+        prompt = _o(usage, "prompt_tokens")
+        completion = _o(usage, "completion_tokens")
+        if prompt is None and completion is None:
+            continue
+        return (int(prompt or 0), int(completion or 0))
+    return None
 
 
 class RoundAccumulator:
@@ -155,6 +166,9 @@ class GroqLLM:
                 chain.append(name)
         self.models = chain or ["openai/gpt-oss-120b"]
         self.model = self.models[0]
+        # Configured summary model (GROQ_SUMMARY_MODEL); empty = resolve to
+        # the fallback model at request time (see _summary_chain).
+        self.summary_model = (settings.groq_summary_model or "").strip()
         # max_retries=0: the SDK must NEVER sleep its own ~52 s backoff
         # inside an awaited handler (root cause of the 60 s end-of-call
         # hang). Only the chain below handles 429s. Constructor still never
@@ -218,14 +232,55 @@ class GroqLLM:
                 usable.append(model)
         return usable or list(self.models)
 
-    def all_cooling(self) -> bool:
-        """True when EVERY model in the chain has an active breaker cooldown.
-        complete() uses this to skip the summary request outright (the
-        session then logs the reason and ships the deterministic fallback)."""
-        if not self.models:
-            return False
+    def _summary_chain(self) -> list[str]:
+        """Models to try for the end-of-call summary, ordered by headroom.
+
+        The summary must NOT start on the model serving the live chat - its
+        TPM budget was just spent BY that call (15:39 incident: chat burned
+        ~7k tokens, the summary 429'd on the primary). Order: the configured
+        GROQ_SUMMARY_MODEL when set, else the fallback model (models[1]),
+        then any other non-primary models, with the live-chat primary last as
+        a last resort. Active circuit-breaker cooldowns are skipped (expired
+        ones recover, logged), and each model appears at most once, so a model
+        that just 429'd is never retried within one summary request. An empty
+        list means every candidate is cooling - complete() then skips the API
+        call outright and the caller ships the deterministic fallback."""
         now = time.monotonic()
-        return all(self._cooldowns.get(m, 0.0) > now for m in self.models)
+
+        def usable(model: str) -> bool:
+            deadline = self._cooldowns.get(model)
+            if deadline is None:
+                return True
+            if deadline <= now:
+                del self._cooldowns[model]
+                logger.info(
+                    "circuit breaker: %s cooldown elapsed - available again",
+                    model,
+                )
+                return True
+            logger.debug(
+                "circuit breaker: %s cooling for %.0fs more - skipping",
+                model,
+                deadline - now,
+            )
+            return False
+
+        primary = self.models[0] if self.models else ""
+        preferred = self.summary_model or (
+            self.models[1] if len(self.models) > 1 else primary
+        )
+        ordered: list[str] = []
+
+        def add(model: str) -> None:
+            if model and model not in ordered and usable(model):
+                ordered.append(model)
+
+        add(preferred)  # headroom first: configured summary model / fallback
+        for model in self.models:  # other non-primary models
+            if model not in (preferred, primary):
+                add(model)
+        add(primary)  # live-chat primary only as a last resort
+        return ordered
 
     async def chat(
         self,
@@ -407,83 +462,78 @@ class GroqLLM:
     async def complete(self, messages: list[dict]) -> str:
         """One-shot non-streaming completion (used by the summarizer).
 
-        Rides the SAME zero-retry client and fallback chain as chat(): one
-        429 backoff retry per model plus a breaker cooldown (so a summary
-        right after a rate-limited turn skips the cooled model entirely),
-        then the next model, LLMUnavailableError once the chain is
-        exhausted. When EVERY model is cooling the request is skipped
-        entirely - no API call at all - and the caller falls back to the
-        deterministic summary. The end handler wraps this in
+        Rides the same zero-retry client as chat() but a different strategy:
+        _summary_chain() puts the model with the most TPM headroom first
+        (GROQ_SUMMARY_MODEL / fallback - never the live-chat primary unless
+        it is the last model standing), active breaker cooldowns are skipped,
+        and a 429 switches to the NEXT model immediately - the summary never
+        retries the model that just rate-limited it (no 0.5 s sleep either;
+        the 6 s end-of-call budget is too precious). Empty chain = every
+        candidate cooling -> skipped outright, no API call, caller falls back
+        to the deterministic summary. The end handler wraps this in
         wait_for(SUMMARY_TIMEOUT) so a slow chain can never hold the call.
         """
-        if self.all_cooling():
+        chain = self._summary_chain()
+        if not chain:
             logger.info(
-                "groq summary skipped - every model is cooling down "
+                "groq summary skipped - every candidate model is cooling down "
                 "(circuit breaker); deterministic fallback will be used"
             )
             raise LLMUnavailableError("all models cooling down (circuit breaker)")
+        logger.info("groq summary -> %s", " > ".join(chain))
         last_error: Exception | None = None
-        for model in self._usable_models():
-            retried_429 = False
-            while True:
-                try:
-                    resp = await self._client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        temperature=0.2,
-                        max_completion_tokens=600,
-                        response_format={"type": "json_object"},
-                        reasoning_effort="low",
-                    )
-                    content = resp.choices[0].message.content or ""
-                    usage = _o(resp, "usage")
-                    prompt_tok = _o(usage, "prompt_tokens")
-                    if prompt_tok is not None:
-                        logger.info(
-                            "groq summary: model=%s chars=%d prompt_tokens=%d "
-                            "completion_tokens=%d [groq usage]",
-                            model,
-                            len(content),
-                            int(prompt_tok),
-                            int(_o(usage, "completion_tokens") or 0),
-                        )
-                    else:
-                        logger.info(
-                            "groq summary: model=%s chars=%d", model, len(content)
-                        )
-                    return content
-                except asyncio.CancelledError:
-                    raise
-                except openai.RateLimitError as exc:
-                    last_error = exc
-                    self._mark_cooldown(model, exc)
-                    if not retried_429:
-                        retried_429 = True
-                        logger.warning(
-                            "groq 429 on %s (summary) - retrying once in %.1fs",
-                            model,
-                            RETRY_BACKOFF_SECONDS,
-                        )
-                        await asyncio.sleep(RETRY_BACKOFF_SECONDS)
-                        continue
-                    logger.warning(
-                        "groq 429 persists on %s (summary) - switching model", model
-                    )
-                    break
-                except openai.APIError as exc:
-                    last_error = exc
-                    logger.warning(
-                        "groq %s on %s (summary) - switching model",
-                        type(exc).__name__,
+        for model in chain:
+            try:
+                resp = await self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.2,
+                    max_completion_tokens=600,
+                    response_format={"type": "json_object"},
+                    reasoning_effort="low",
+                )
+                content = resp.choices[0].message.content or ""
+                usage = _o(resp, "usage")
+                prompt_tok = _o(usage, "prompt_tokens")
+                if prompt_tok is not None:
+                    logger.info(
+                        "groq summary: model=%s chars=%d prompt_tokens=%d "
+                        "completion_tokens=%d [groq usage]",
                         model,
+                        len(content),
+                        int(prompt_tok),
+                        int(_o(usage, "completion_tokens") or 0),
                     )
-                    break
+                else:
+                    logger.info(
+                        "groq summary: model=%s chars=%d", model, len(content)
+                    )
+                return content
+            except asyncio.CancelledError:
+                raise
+            except openai.RateLimitError as exc:
+                last_error = exc
+                self._mark_cooldown(model, exc)
+                logger.warning(
+                    "groq 429 on %s (summary) - not retrying it (headroom "
+                    "matters); switching to the next model",
+                    model,
+                )
+                continue
+            except openai.APIError as exc:
+                last_error = exc
+                logger.warning(
+                    "groq %s on %s (summary) - switching model",
+                    type(exc).__name__,
+                    model,
+                )
+                continue
         detail = (
             f"{type(last_error).__name__}: {last_error}" if last_error else "no models"
         )
         logger.error(
             "groq summary failed on all %d model(s) in the chain: %s",
-            len(self.models),
+            len(chain),
             detail,
         )
         raise LLMUnavailableError(f"summary model chain failed: {detail}") from last_error

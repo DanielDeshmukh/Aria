@@ -120,7 +120,9 @@ def test_end_with_429_chain_summary_sends_fallback_summary(
     async def scenario() -> None:
         await to_listening(session)
         await asyncio.wait_for(session.handle({"type": "end"}), timeout=2.0)
-        assert len(calls) == 4  # 2 attempts x 2 models
+        # summary chain is headroom-first (model-b, the fallback) and a 429
+        # switches models immediately - one attempt per model, no retries:
+        assert calls == ["model-b", "model-a"]
         assert_summary_and_ended(box)
 
     asyncio.run(scenario())

@@ -31,6 +31,11 @@ class Settings:
     # Fallback model when the primary is rate-limited/unavailable: a smaller
     # Groq model with tool calling (llm.py walks the chain on failure).
     groq_fallback_model: str = "openai/gpt-oss-20b"
+    # Model for the END-OF-CALL summary request. Empty = the fallback model -
+    # deliberately NOT the primary, whose TPM budget the live call itself just
+    # consumed (15:39 incident: chat burned ~7k tokens, summary 429'd on the
+    # primary). Set GROQ_SUMMARY_MODEL to override.
+    groq_summary_model: str = ""
     sarvam_voice: str = ""  # female Indian-English persona, set after T11 probe
     # Deepgram language: multi is the default because en-IN dead-drops
     # Hinglish utterances (measured: 0 finals for "Mera order kahan hai?",
@@ -61,6 +66,7 @@ def get_settings() -> Settings:
             os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
             or "openai/gpt-oss-20b"
         ),
+        groq_summary_model=os.getenv("GROQ_SUMMARY_MODEL", "").strip(),
         sarvam_voice=os.getenv("SARVAM_VOICE", "").strip(),
         stt_language=os.getenv("STT_LANGUAGE", "multi").strip() or "multi",
     )

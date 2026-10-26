@@ -52,6 +52,13 @@ _SYSTEM = (
 
 _MISSING = object()
 
+# Prompt budget for the summary request: only the last SUMMARY_TURNS
+# transcript turns go to the LLM, plus compact tool facts - the full
+# transcript/tool_log still feed the deterministic fallback. Production
+# (15:39) showed chat TPM exhausted right before the summary; keeping this
+# request well under 1.5k tokens also keeps it inside any surviving budget.
+SUMMARY_TURNS = 12
+
 # Intent topic phrases for the no-tool-log fallback summary.
 _TOPIC = {
     "ORDER_TRACKING": "order",
@@ -310,23 +317,74 @@ def _parse(text: str) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def _tool_facts(tool_log: list[dict]) -> str:
+    """One line per tool call: name + decisive outcome fields only. The full
+    result JSON (order payloads, policy dumps) would dwarf the prompt - the
+    facts (_coerce/fallback) still read the complete log, only the LLM prompt
+    sees this digest."""
+    lines: list[str] = []
+    for entry in tool_log:
+        args = entry.get("args") or {}
+        result = entry.get("result") or {}
+        bits: list[str] = [str(entry.get("name") or "?")]
+        if args.get("order_id"):
+            bits.append(f"order_id={args['order_id']}")
+        if result.get("error"):
+            bits.append(f"error={result['error']}")
+        if "cancelled" in result:
+            bits.append(f"cancelled={result['cancelled']}")
+        if "found" in result:
+            bits.append(f"found={result['found']}")
+        if result.get("topic"):
+            bits.append(f"topic={result['topic']}")
+        if result.get("reason"):
+            bits.append(f"reason={str(result['reason'])[:60]}")
+        order = result.get("order")
+        if isinstance(order, dict):
+            if order.get("id"):
+                bits.append(f"order={order['id']}")
+            if order.get("status"):
+                bits.append(f"status={order['status']}")
+        flags = result.get("flags")
+        if isinstance(flags, dict):
+            for key in ("cancellable", "return_eligible"):
+                if key in flags:
+                    bits.append(f"{key}={flags[key]}")
+            for key in ("cancel_reason", "return_reason"):
+                if flags.get(key):
+                    bits.append(f"{key}={str(flags[key])[:60]}")
+        lines.append("- " + " ".join(str(bit) for bit in bits))
+    return "\n".join(lines)
+
+
+def _render_user(transcript: list[dict], tool_log: list[dict]) -> str:
+    """Prompt body: the last SUMMARY_TURNS transcript turns + tool facts -
+    sized to keep the summary request well under 1.5k tokens. Everything
+    the fallback/_coerce need still gets the FULL transcript and tool_log;
+    this trimming touches only what the LLM is asked to read."""
+    turns = transcript[-SUMMARY_TURNS:]
+    rendered = "\n".join(
+        f"[{'CUSTOMER' if m.get('role') == 'customer' else 'ARIA'}] {m.get('text', '')}"
+        for m in turns
+    )
+    if len(transcript) > len(turns):
+        rendered = (
+            f"(earlier turns omitted; showing the last {len(turns)})\n" + rendered
+        )
+    if tool_log:
+        rendered += "\n\nTool calls made during the call:\n" + _tool_facts(tool_log)
+    return rendered or "(empty call)"
+
+
 async def build_summary(
     llm: Any, transcript: list[dict], tool_log: list[dict] | None = None
 ) -> dict:
     tool_log = list(tool_log or [])
-    rendered = "\n".join(
-        f"[{'CUSTOMER' if m.get('role') == 'customer' else 'ARIA'}] {m.get('text', '')}"
-        for m in transcript
-    )
-    if tool_log:
-        rendered += "\n\nTool calls made during the call:\n" + json.dumps(
-            tool_log, ensure_ascii=False, default=str
-        )
     try:
         raw = await llm.complete(
             [
                 {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": rendered or "(empty call)"},
+                {"role": "user", "content": _render_user(transcript, tool_log)},
             ]
         )
     except Exception as exc:

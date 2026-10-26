@@ -64,3 +64,20 @@ def test_fallback_model_default_and_env_override(monkeypatch: pytest.MonkeyPatch
         assert config.get_settings().groq_fallback_model == "openai/gpt-oss-20b"
     finally:
         config.get_settings.cache_clear()  # never leak the fake env to other tests
+
+
+def test_summary_model_env_override_and_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GROQ_SUMMARY_MODEL picks the end-of-call summary model; empty/blank
+    means the chain defaults to the fallback model (never the live-chat
+    primary, whose TPM budget the call itself just spent)."""
+    config.get_settings.cache_clear()
+    try:
+        assert config.Settings().groq_summary_model == ""  # -> fallback model
+        monkeypatch.setenv("GROQ_SUMMARY_MODEL", "acme/summary-1")
+        config.get_settings.cache_clear()
+        assert config.get_settings().groq_summary_model == "acme/summary-1"
+        monkeypatch.setenv("GROQ_SUMMARY_MODEL", "   ")  # blank -> fallback again
+        config.get_settings.cache_clear()
+        assert config.get_settings().groq_summary_model == ""
+    finally:
+        config.get_settings.cache_clear()  # never leak the fake env to other tests

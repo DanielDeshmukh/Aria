@@ -68,6 +68,7 @@ def make_llm(
     monkeypatch.setattr(llm_mod, "RETRY_BACKOFF_SECONDS", 0.0)
     llm = GroqLLM()
     llm.models = list(chain)  # deterministic regardless of local .env
+    llm.summary_model = ""  # ditto: empty = default to the fallback model
     calls: list[str] = []
     monkeypatch.setattr(
         llm._client.chat.completions, "create", scripted(script, calls)
@@ -177,6 +178,7 @@ def make_llm_complete(
     monkeypatch.setattr(llm_mod, "RETRY_BACKOFF_SECONDS", 0.0)
     llm = GroqLLM()
     llm.models = list(chain)
+    llm.summary_model = ""  # deterministic regardless of local .env
     calls: list[str] = []
     monkeypatch.setattr(
         llm._client.chat.completions, "create", scripted_complete(script, calls)
@@ -184,24 +186,31 @@ def make_llm_complete(
     return llm, calls
 
 
-def test_complete_retries_429_once_then_succeeds(
+def test_complete_switches_models_immediately_after_a_429(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Summary chain is headroom-first (model-b first, model-a last): a 429
+    # opens the breaker and switches models at once - never a second hit on
+    # the model that just rate-limited us (15:39 incident).
     llm, calls = make_llm_complete(monkeypatch, [rate_limit(), '{"ok": 1}'])
     out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
     assert out == '{"ok": 1}'
-    assert calls == ["model-a", "model-a"]  # one retry, same model
+    assert calls == ["model-b", "model-a"]  # one attempt per model, fallback first
 
 
-def test_complete_falls_through_to_fallback_model(
+def test_complete_falls_through_the_summary_chain_after_429s(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # 3-model chain: headroom model (models[1]) -> other non-primary ->
+    # live-chat primary last; each 429 skips ahead immediately.
     llm, calls = make_llm_complete(
-        monkeypatch, [rate_limit(), rate_limit(), '{"ok": 2}']
+        monkeypatch,
+        [rate_limit(), rate_limit(), '{"ok": 2}'],
+        chain=("model-a", "model-b", "model-c"),
     )
     out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
     assert out == '{"ok": 2}'
-    assert calls == ["model-a", "model-a", "model-b"]  # retry, then chain
+    assert calls == ["model-b", "model-c", "model-a"]  # fallback-first, primary last
 
 
 def test_complete_chain_exhausted_raises_llm_unavailable(
@@ -210,7 +219,7 @@ def test_complete_chain_exhausted_raises_llm_unavailable(
     llm, calls = make_llm_complete(monkeypatch, [rate_limit()] * 4)
     with pytest.raises(LLMUnavailableError):
         asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
-    assert len(calls) == 4  # 2 attempts x 2 models
+    assert calls == ["model-b", "model-a"]  # both tried exactly once, no retries
 
 
 def test_complete_non_429_switches_without_retry(
@@ -219,7 +228,7 @@ def test_complete_non_429_switches_without_retry(
     llm, calls = make_llm_complete(monkeypatch, [server_error(), '{"ok": 3}'])
     out = asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
     assert out == '{"ok": 3}'
-    assert calls == ["model-a", "model-b"]  # 500: no retry, straight to chain
+    assert calls == ["model-b", "model-a"]  # 500: no retry, straight to next model
 
 
 def test_complete_logs_which_model_answered(
@@ -229,4 +238,4 @@ def test_complete_logs_which_model_answered(
     with caplog.at_level(logging.INFO, logger="backend.llm"):
         asyncio.run(llm.complete([{"role": "user", "content": "sum"}]))
     records = [r.getMessage() for r in caplog.records]
-    assert any("groq summary: model=model-a" in m for m in records), records
+    assert any("groq summary: model=model-b" in m for m in records), records
