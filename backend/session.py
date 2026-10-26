@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import re
 import time
@@ -20,11 +21,18 @@ from .prompts import SYSTEM_PROMPT
 from .splitter import split_sentences
 from .summary import build_summary, fallback_summary
 
+logger = logging.getLogger(__name__)
+
 SendFn = Callable[[dict], Awaitable[None]]
 
 GREETING = "Hi, this is Aria from Aura Skincare. How can I help you today?"
 REPEAT = "Sorry, I didn't catch that. Could you please repeat?"
 STILL_THERE = "Are you still there? I'm happy to help if you need anything."
+# Spoken when the whole LLM model chain fails (rate limits, outage): the
+# call stays alive — no error banner, no ended state.
+LLM_TROUBLE = (
+    "Sorry, I'm having a little trouble, could you say that again in a moment?"
+)
 SILENCE_SECONDS = 9.0
 # The nudge must never fire while the customer is talking: interims restart
 # the 9 s countdown, and a fire additionally requires this much quiet since
@@ -50,6 +58,25 @@ _YES_NO_Q_START = re.compile(
     r"^(do you|would you|shall i|should i|can i|are you|is that|can we|"
     r"have you|did you)\b",
     re.I,
+)
+# Fragment coalescing: endpointing can finalize an utterance in pieces
+# ("Can you tell me where my order" + "one zero one is?") and the first half
+# alone gets a half-answer. A final that looks incomplete holds for
+# FRAGMENT_HOLD_SECONDS so the next final can join it; a final with terminal
+# punctuation (a complete sentence) is never delayed.
+FRAGMENT_HOLD_SECONDS = 0.7
+# Words that clearly stop mid-thought when they end an unpunctuated final.
+DANGLING_FINAL_WORDS = frozenset(
+    {
+        "a", "an", "the", "my", "your", "our", "their", "her", "his", "its",
+        "to", "of", "for", "and", "or", "nor", "in", "on", "at", "by",
+        "with", "from", "into", "about", "is", "are", "was", "were", "be",
+        "been", "am", "do", "did", "does", "have", "has", "had", "can",
+        "could", "will", "would", "shall", "should", "may", "might", "that",
+        "this", "it", "he", "she", "we", "they", "you", "i", "me", "us",
+        "them", "what", "where", "when", "which", "who", "how", "why",
+        "tell", "order",
+    }
 )
 # Vercel Functions (Hobby) kill WebSockets at maxDuration = 300 s: warn the
 # client at 270 s, finish gracefully (summary + ended) at 295 s.
@@ -81,6 +108,8 @@ class CallSession:
         self._last_interim_at = 0.0
         self._last_user_speech_at = 0.0
         self._last_agent_question = ""
+        self._pending_final = ""
+        self._hold_task: asyncio.Task | None = None
         self._still_there_sent = False
         self._warn_handle: asyncio.TimerHandle | None = None
         self._end_handle: asyncio.TimerHandle | None = None
@@ -107,6 +136,7 @@ class CallSession:
         self._cancel_call_deadlines()
         await self._cancel_turn()
         self._cancel_silence()
+        self._cancel_hold()
         for closer in (self.stt, self.tts):
             try:
                 await closer.close()
@@ -171,6 +201,10 @@ class CallSession:
                 self._last_user_speech_at = now
                 if self.state == "listening":
                     self._arm_silence()
+                if self._pending_final:
+                    # the customer resumed mid-fragment: keep the join window
+                    # open so the next final completes the sentence
+                    self._arm_hold()
             # Deepgram does not emit SpeechStarted on our live config; a real
             # interim during our audio is the reliable barge-in signal.
             if text and self.state in ("speaking", "thinking"):
@@ -211,7 +245,23 @@ class CallSession:
             # Unclear audio: never act on it, canned repeat instead.
             await self._canned_speak(REPEAT)
             return
-        await self._start_turn(user_text=text)
+        # Fragment coalescing: join with a held fragment (or refine it) before
+        # deciding whether the sentence is complete enough for the LLM.
+        joined = text
+        if self._pending_final:
+            pending = self._pending_final
+            if text.startswith(pending):
+                joined = text  # Deepgram sent a longer restatement
+            elif pending.startswith(text):
+                joined = pending  # stale shorter duplicate
+            else:
+                joined = f"{pending} {text}"  # true mid-utterance split
+        if self._looks_incomplete(joined):
+            self._pending_final = joined
+            self._arm_hold()
+            return
+        self._cancel_hold()
+        await self._start_turn(user_text=joined)
 
     def _final_acceptable(self, text: str, confidence: float | None) -> bool:
         """Gate for finals at LOW_CONFIDENCE: normally reject, but accept a
@@ -245,6 +295,58 @@ class CallSession:
             or re.search(r"\bstill there\b", question, re.I)
         )
 
+    @staticmethod
+    def _has_terminal_punct(text: str) -> bool:
+        stripped = text.rstrip().rstrip("\"'”’)]»")
+        return bool(stripped) and stripped[-1] in ".?!…"
+
+    @classmethod
+    def _looks_incomplete(cls, text: str) -> bool:
+        """True when a final clearly stops mid-thought and should wait
+        FRAGMENT_HOLD_SECONDS for the next final: no terminal punctuation AND
+        (ends on a dangling word, or is under 3 words and answers neither a
+        yes/no nor a digit/order-id). Complete sentences never wait."""
+        if cls._has_terminal_punct(text):
+            return False
+        words = [w for w in (w.strip(".,;:!?") for w in text.lower().split()) if w]
+        if not words:
+            return False
+        if words[-1] in DANGLING_FINAL_WORDS:
+            return True
+        return (
+            len(words) < 3
+            and not cls._is_yes_no_answer(text)
+            and normalize_order_id(text) is None
+        )
+
+    # ------------------------------------------------------------ coalescing
+    def _arm_hold(self) -> None:
+        self._cancel_hold_task()
+        self._hold_task = asyncio.create_task(self._hold_fire())
+
+    async def _hold_fire(self) -> None:
+        try:
+            await asyncio.sleep(FRAGMENT_HOLD_SECONDS)
+        except asyncio.CancelledError:
+            return
+        if self._closing or self._ended:
+            return
+        text = self._pending_final
+        self._pending_final = ""
+        self._hold_task = None
+        if text:
+            await self._start_turn(user_text=text)
+
+    def _cancel_hold_task(self) -> None:
+        task = self._hold_task
+        self._hold_task = None
+        if task and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
+    def _cancel_hold(self) -> None:
+        self._cancel_hold_task()
+        self._pending_final = ""
+
     async def _on_speech_start(self) -> None:
         if self._closing or self._ended or not self._started:
             return
@@ -272,6 +374,7 @@ class CallSession:
         self._cancel_call_deadlines()
         await self._cancel_turn()
         self._cancel_silence()
+        self._cancel_hold()
         try:
             await self.stt.close()
         except Exception:
@@ -297,6 +400,7 @@ class CallSession:
         self._cancel_call_deadlines()
         await self._cancel_turn()
         self._cancel_silence()
+        self._cancel_hold()
         await self._set_state("ended")
         for closer in (self.stt, self.tts):
             try:
@@ -307,6 +411,7 @@ class CallSession:
     # ------------------------------------------------------------------ turns
     async def _start_turn(self, user_text: str | None = None) -> None:
         self._cancel_silence()
+        self._cancel_hold()
         await self._cancel_turn()
         # the gate already consumed it; a stale question must not legitimise
         # the next low-confidence murmur
@@ -338,12 +443,24 @@ class CallSession:
                             "result": event.get("result"),
                         }
                     )
+                elif event.get("type") == "llm_stats":
+                    await self.send(
+                        {
+                            "type": "llm_stats",
+                            "model": event.get("model"),
+                            "approx_tokens": event.get("approx_tokens"),
+                        }
+                    )
             if not self._ended:
                 await self._flush(buffer, final=True)
         except asyncio.CancelledError:
             raise
-        except Exception as e:
-            await self._fail(f"language model unavailable: {type(e).__name__}")
+        except Exception:
+            # Provider failure after the model chain gave up (or any other LLM
+            # error): keep the call alive — apologize once and go back to
+            # listening. Never an error event, never `ended`.
+            logger.exception("llm turn failed - speaking the graceful line")
+            await self._canned_speak(LLM_TROUBLE)
             return
         if self.state == "thinking":
             await self._set_state("listening")
@@ -366,6 +483,7 @@ class CallSession:
         return rest
 
     async def _canned_speak(self, text: str) -> None:
+        self._cancel_hold()
         await self._cancel_turn()
         await self._speak(text)
 

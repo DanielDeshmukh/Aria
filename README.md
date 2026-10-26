@@ -27,7 +27,7 @@ https://danieldeshmukh.github.io/aria-demo-link/ — headphones recommended.)
 **LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
 
 **Current status (2026-10-26):** all four assignment phases are shipped —
-169 tests green locally (157 pass + 12 provider-key tests skip in CI, which
+182 tests green locally (170 pass + 12 provider-key tests skip in CI, which
 has no secrets), the 14-scenario runbook passes 14/14 on the production
 path (and 14/14 on the earlier public tunnel URL), and the site nav lists
 every section at clean paths (`/call`, `/pipeline` — no hash URLs anywhere).
@@ -202,7 +202,7 @@ Aria/
 │   ├── data/orders.json     #   ORD-101..103 fixtures
 │   ├── scripts/             #   probe_sarvam, text_harness, ws_smoke
 │   │                        #   (remote WS greeting+summary probe)
-│   └── tests/               #   169 tests (hermetic + live smoke tests)
+│   └── tests/               #   182 tests (hermetic + live smoke tests)
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React product site (Vite + Tailwind)
 │   ├── src/
@@ -298,7 +298,7 @@ npx tsc --noEmit        # typecheck
 npm run build           # production build (dist/ must exist)
 cd ..
 pip install -r requirements-dev.txt
-python -m pytest -v     # full suite: 169 tests (see table below)
+python -m pytest -v     # full suite: 182 tests (see table below)
 ```
 
 Run the suite any time from the repo root (SPA tests auto-skip if
@@ -325,9 +325,10 @@ Test suite layout:
 | `test_policy` / `test_normalize` / `test_tools` | returns/COD/shipping rules, order-id normalization (word numbers, smart-format `O` → `0`, run-joins), tool schemas + not-found vs no-id guard |
 | `test_prompt_verbatim` | system prompt locked verbatim |
 | `test_llm_assembly` | streaming text + fragmented tool calls → correct history (`tool_call_id`) |
+| `test_llm_failover` | 429 retry + fallback model chain, `LLMUnavailableError` when exhausted, per-turn model/token log + `llm_stats` event |
 | `test_summary` | 4-key summary coercion + deterministic fallback |
 | `test_splitter` | sentence boundaries: abbreviations, prices, partial tails |
-| `test_ws_session` / `test_ws_route` / `test_ws_edges` | state machine: greeting, turns, barge-in, silence, canned lines, provider failures |
+| `test_ws_session` / `test_ws_route` / `test_ws_edges` | state machine: greeting, turns, barge-in, silence, canned lines, fragment coalescing (700 ms hold + join), provider failures |
 | `test_audio_utils` / `test_stt_parse` | resample/base64, Deepgram frame parsing |
 | `test_vercel_adapt` | Vercel config (`fluid`, region, 300 s, build), `.vercelignore`, `ws-selftest` route, 270 s/295 s call-deadline timers (set only when `VERCEL` is set) |
 | `test_return_condition` / `test_discount_rule` | opened-product return rule in code + prompt, no-discount rule in `POLICY_TEXT`/prompt/tool enum |
@@ -368,9 +369,10 @@ Server → client frames:
 | `barge_in` | — | customer interrupted the agent (turn cancelled) |
 | `tool` | `name`, `args`, `result` | order/policy tool executed |
 | `stats` | `first_audio_ms`, `tool_lookup_ms` (tool turns) | turn latency to first audio; server-side order lookup + policy verdict cost |
+| `llm_stats` | `model`, `approx_tokens` | which Groq model answered the turn + approximate tokens used (~4 chars/token) — the primary is retried on 429, then a fallback model answers |
 | `summary` | `transcript`, `summary` | 4-key post-call summary (LLM, deterministic fallback) |
 | `call_ending_soon` | `seconds_left` | host is about to enforce its call-time limit (270 s; server force-ends at 295 s) — client shows a notice and hangs up gracefully, with the summary sent first |
-| `error` | `message` | provider failure — message contains names only, never secrets |
+| `error` | `message` | provider failure (STT/TTS — an LLM chain failure instead speaks one graceful apology line and stays on the call) — message contains names only, never secrets |
 
 Guardrails inside the session: a customer interim during playback or
 thinking triggers barge-in (Deepgram omits `SpeechStarted` on our config, so
@@ -383,7 +385,15 @@ yes/no answering Aria's last question, which are taken at face value), and
 the session is one-shot (one call per connection). When the client goes
 quiet, the server feeds Deepgram its own 100 ms silence frames so
 endpointing (800 ms — less eager than the original 300 ms, which finalized
-mid-sentence) still finalizes the utterance. On
+mid-sentence) still finalizes the utterance. Because endpointing can still
+cut an utterance into two finals, a final that looks incomplete (no terminal
+punctuation AND ending on a dangling word, or a sub-3-word fragment that
+answers neither a yes/no nor an order id) is held for 700 ms so the next
+final can join it into one message for the LLM — interims re-arm the window
+while the customer keeps talking, and complete sentences are never delayed.
+If the whole LLM model chain fails (rate limits, provider outage), Aria
+speaks one graceful apology line and stays on the call instead of erroring
+out. On
 Vercel (where `VERCEL` is set) the server also schedules a 270 s warning +
 295 s graceful close so the call ends with a summary before the platform's
 300 s function limit; locally these timers are not armed.
@@ -426,6 +436,7 @@ Copy-Item .env.example .env
 | `GROQ_API_KEY` | yes | LLM with tool calling | server only |
 | `SARVAM_API_KEY` | yes | Sarvam Bulbul v4 Flash TTS | server only |
 | `GROQ_MODEL` | no (default `openai/gpt-oss-120b`) | model override | server only |
+| `GROQ_FALLBACK_MODEL` | no (default `openai/gpt-oss-20b`) | second model in the LLM chain, tried when the primary is rate-limited/unavailable | server only |
 | `SARVAM_VOICE` | no (default `simran_en_customer`) | TTS persona override | server only |
 
 `.env` is git-ignored, excluded from the Docker build context and listed in

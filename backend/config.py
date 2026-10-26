@@ -28,6 +28,9 @@ class Settings:
     groq_api_key: str = field(repr=False, default="")
     sarvam_api_key: str = field(repr=False, default="")
     groq_model: str = "openai/gpt-oss-120b"
+    # Fallback model when the primary is rate-limited/unavailable: a smaller
+    # Groq model with tool calling (llm.py walks the chain on failure).
+    groq_fallback_model: str = "openai/gpt-oss-20b"
     sarvam_voice: str = ""  # female Indian-English persona, set after T11 probe
     # Deepgram language: multi is the default because en-IN dead-drops
     # Hinglish utterances (measured: 0 finals for "Mera order kahan hai?",
@@ -54,6 +57,10 @@ def get_settings() -> Settings:
         groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
         sarvam_api_key=os.getenv("SARVAM_API_KEY", "").strip(),
         groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip(),
+        groq_fallback_model=(
+            os.getenv("GROQ_FALLBACK_MODEL", "openai/gpt-oss-20b").strip()
+            or "openai/gpt-oss-20b"
+        ),
         sarvam_voice=os.getenv("SARVAM_VOICE", "").strip(),
         stt_language=os.getenv("STT_LANGUAGE", "multi").strip() or "multi",
     )

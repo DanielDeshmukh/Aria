@@ -11,7 +11,7 @@ import asyncio
 import pytest
 
 import backend.session as session_mod
-from backend.session import REPEAT, STILL_THERE, CallSession
+from backend.session import LLM_TROUBLE, REPEAT, STILL_THERE, CallSession
 from backend.tests._fakes import EventBox, FakeLLM, FakeSTT, FakeTTS, wait_until
 
 
@@ -80,24 +80,34 @@ def test_tts_greeting_failure_ends_session_with_named_error() -> None:
     asyncio.run(scenario())
 
 
-def test_llm_failure_during_turn_ends_session() -> None:
+def test_llm_failure_during_turn_graceful_recovery() -> None:
+    """Bug 1 (session side): once the whole model chain gives up, the call
+    must NOT die — Aria speaks the graceful apology, state returns to
+    listening, no error event is ever sent, and the next turn still reaches
+    the LLM."""
+
     async def scenario() -> None:
         session, box, stt, llm, tts = make(
             FakeLLM(rounds=[("error", "groq 500")])
         )
         await to_listening(session, box)
         await stt.emit_final("where is my order ORD-101")
-        await wait_until(lambda: box.of("error"), what="llm error event")
-        assert box.of("error")[0]["message"] == (
-            "language model unavailable: RuntimeError"
+        await wait_until(
+            lambda: count(box, LLM_TROUBLE) >= 1, what="graceful LLM_TROUBLE line"
         )
-        assert box.states()[-1] == "ended"
-        assert stt.closed is True
-        before = len(box.of("transcript"))
-        await stt.emit_final("anyone there")  # post-end transcript ignored
-        assert len(box.of("transcript")) == before
-        await session.handle({"type": "start"})
-        assert box.of("error")[-1]["message"] == "session already ended"
+        assert box.of("error") == []  # no error banner, ever
+        assert box.states()[-1] != "ended"
+        assert stt.closed is False  # providers stay up
+        # playback_done -> listening, then a second final reaches the LLM again
+        await session.handle({"type": "playback_done"})
+        await wait_until(lambda: box.states()[-1] == "listening", what="listening again")
+        await stt.emit_final("hello are you there")
+        await wait_until(lambda: llm.chat_calls == 2, what="second llm turn")
+        assert box.of("error") == []
+        assert box.states()[-1] != "ended"
+        # end still works (clean shutdown, no extra errors)
+        await session.handle({"type": "end"})
+        assert box.of("error") == []
 
     asyncio.run(scenario())
 

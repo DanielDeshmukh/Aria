@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -8,6 +9,13 @@ from .llm import GroqLLM
 from .selftest import run_selftest
 from .stt import DeepgramSTT
 from .tts import SarvamTTS
+
+# Backend loggers (backend.llm turn reports, session warnings) have no handler
+# otherwise — uvicorn/Vercel stdout would swallow them.
+if not logging.root.handlers:
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
+    )
 
 app = FastAPI(title="Aria Voice Agent", version="0.1.0")
 

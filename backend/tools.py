@@ -57,15 +57,15 @@ TOOL_SCHEMAS: list[dict] = [
         "function": {
             "name": "cancel_order",
             "description": (
-                "Cancel an order that is still Processing. Gated: check "
-                "eligibility FIRST (get_order_details flags.cancellable, or "
-                "call with confirmed=false to preview); if it is not "
-                "cancellable, return the INELIGIBLE reason to the customer "
-                "without asking for confirmation. Only after reading back the "
-                "order id and product and getting an explicit yes call with "
-                "confirmed=true. Returns structured NOT_CONFIRMED, NOT_FOUND "
-                "or INELIGIBLE (with the policy reason) results instead of "
-                "cancelling. Never mutates data beyond this structured result."
+                "Cancel an order that is still Processing. Check eligibility "
+                "FIRST (get_order_details flags.cancellable, or call with "
+                "confirmed=false to preview); if it is not cancellable return "
+                "the INELIGIBLE reason to the customer without asking for "
+                "confirmation. Call with confirmed=true only after reading "
+                "back the order id and product and getting an explicit yes. "
+                "Returns structured NOT_CONFIRMED, NOT_FOUND or INELIGIBLE "
+                "results instead of cancelling; never mutates data beyond "
+                "this."
             ),
             "parameters": {
                 "type": "object",

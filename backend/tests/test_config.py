@@ -47,3 +47,20 @@ def test_missing_keys_returns_names_only(monkeypatch: pytest.MonkeyPatch) -> Non
         ),
     )
     assert config.get_settings().missing_keys() == ["GROQ_API_KEY", "SARVAM_API_KEY"]
+
+
+def test_fallback_model_default_and_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bug 1: the second model in the LLM chain is env-configurable."""
+    config.get_settings.cache_clear()
+    try:
+        assert config.Settings().groq_fallback_model == "openai/gpt-oss-20b"
+        monkeypatch.setenv("GROQ_FALLBACK_MODEL", "llama-3.3-70b-versatile")
+        config.get_settings.cache_clear()
+        assert config.get_settings().groq_fallback_model == (
+            "llama-3.3-70b-versatile"
+        )
+        monkeypatch.setenv("GROQ_FALLBACK_MODEL", "   ")  # blank -> default back
+        config.get_settings.cache_clear()
+        assert config.get_settings().groq_fallback_model == "openai/gpt-oss-20b"
+    finally:
+        config.get_settings.cache_clear()  # never leak the fake env to other tests

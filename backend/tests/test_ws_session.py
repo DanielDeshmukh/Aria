@@ -572,3 +572,103 @@ def test_nudge_never_fires_within_fresh_window_after_final(
         )
 
     asyncio.run(scenario())
+
+
+# ------------------------------------------------------- fragment coalescing
+def test_complete_final_starts_turn_immediately() -> None:
+    """A finished sentence (terminal punctuation) must never wait for the
+    coalescing hold."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(FakeLLM(rounds=[("text", "Sure.")]))
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("Where is my order?")
+        await wait_until(
+            lambda: llm.chat_calls == 1, what="immediate turn", timeout=0.4
+        )
+        assert session.messages[-1]["content"] == "Where is my order?"
+
+    asyncio.run(scenario())
+
+
+def test_split_finals_join_before_the_llm_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug 2: endpointing cuts "Can you tell me where my order" /
+    "one zero one is?" — the LLM must see ONE joined message. The interim
+    between the finals re-arms the hold so the second final still arrives
+    inside the join window."""
+    monkeypatch.setattr(session_mod, "FRAGMENT_HOLD_SECONDS", 0.5)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(FakeLLM(rounds=[("text", "One moment.")]))
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("Can you tell me where my order")  # ends dangling
+        await asyncio.sleep(0.1)
+        assert llm.chat_calls == 0  # held, not sent half-done
+        await asyncio.sleep(0.35)  # t≈0.45, still inside the original hold
+        await stt.emit_interim("Can you tell me where my order one zero one is")
+        await asyncio.sleep(0.15)  # t≈0.60 — PAST the original 0.5 s deadline
+        assert llm.chat_calls == 0, "interim must re-arm the hold window"
+        await stt.emit_final("one zero one is?")
+        await wait_until(lambda: llm.chat_calls == 1, what="joined turn", timeout=1.5)
+        assert session.messages[-1]["content"] == (
+            "Can you tell me where my order one zero one is?"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_incomplete_final_fires_after_the_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No second fragment coming: the held final goes to the LLM by itself
+    after FRAGMENT_HOLD_SECONDS — never a permanent stall."""
+    monkeypatch.setattr(session_mod, "FRAGMENT_HOLD_SECONDS", 0.3)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(FakeLLM(rounds=[("text", "Checking.")]))
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("where is my order")
+        await asyncio.sleep(0.1)
+        assert llm.chat_calls == 0  # still holding
+        await wait_until(lambda: llm.chat_calls == 1, what="hold fires", timeout=1.5)
+        assert session.messages[-1]["content"] == "where is my order"
+
+    asyncio.run(scenario())
+
+
+def test_short_but_ready_finals_are_not_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Digits/ids and yes/no answers are complete answers — under 3 words is
+    no reason to delay them; only genuinely dangling fragments wait."""
+    monkeypatch.setattr(session_mod, "FRAGMENT_HOLD_SECONDS", 0.3)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(FakeLLM(rounds=[("text", "OK.")]))
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("101")  # order id -> immediate
+        await wait_until(lambda: llm.chat_calls == 1, what="digit final", timeout=0.4)
+        await stt.emit_final("hello there")  # 2 words, no answer -> held
+        await asyncio.sleep(0.1)
+        assert llm.chat_calls == 1, "2-word fragment must be held"
+        await wait_until(lambda: llm.chat_calls == 2, what="held fragment fires", timeout=1.5)
+
+    asyncio.run(scenario())
+
+
+def test_refined_final_replaces_held_prefix() -> None:
+    """Deepgram restates a fragment longer instead of splitting it: the newer
+    final starts with the held text and must replace it, not double it."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(FakeLLM(rounds=[("text", "Checking.")]))
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("where is my order")
+        await asyncio.sleep(0.05)
+        await stt.emit_final("where is my order ORD-101")  # prefix refinement
+        await wait_until(lambda: llm.chat_calls == 1, what="refined turn", timeout=1.5)
+        assert session.messages[-1]["content"] == "where is my order ORD-101"
+
+    asyncio.run(scenario())
