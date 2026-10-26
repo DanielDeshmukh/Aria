@@ -29,6 +29,13 @@ class Settings:
     sarvam_api_key: str = field(repr=False, default="")
     groq_model: str = "openai/gpt-oss-120b"
     sarvam_voice: str = ""  # female Indian-English persona, set after T11 probe
+    # Deepgram language: multi is the default because en-IN dead-drops
+    # Hinglish utterances (measured: 0 finals for "Mera order kahan hai?",
+    # while multi returns conf 1.0). multi's mis-detection risk (short lines
+    # in e.g. Telugu script) is handled by normalize.has_foreign_script —
+    # those finals become a canned "please repeat", never an LLM turn.
+    # Flip to en-IN for English-only deployments via STT_LANGUAGE.
+    stt_language: str = "multi"
 
     def missing_keys(self) -> list[str]:
         """Names (never values) of required keys that are unset."""
@@ -48,6 +55,7 @@ def get_settings() -> Settings:
         sarvam_api_key=os.getenv("SARVAM_API_KEY", "").strip(),
         groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip(),
         sarvam_voice=os.getenv("SARVAM_VOICE", "").strip(),
+        stt_language=os.getenv("STT_LANGUAGE", "multi").strip() or "multi",
     )
 
 

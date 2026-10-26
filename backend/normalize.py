@@ -11,6 +11,7 @@ an id needs at least three digits, so fragments like "ORD two" return None.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 SPOKEN_DIGITS: dict[str, str] = {
     "zero": "0",
@@ -107,6 +108,26 @@ def _run_value(toks: list[str]) -> int | None:
             return None
         return hv * 100 + rv
     return _simple_value(toks)
+
+
+def has_foreign_script(text: str) -> bool:
+    """True when `text` contains letters outside Latin or Devanagari.
+
+    Live repro of the language=multi mis-detection: a short English line
+    ("thank you") came back as Telugu finals and was acted on. Any letter
+    whose Unicode name is neither LATIN nor DEVANAGARI flags the final, so
+    the session treats it as unclear and asks to repeat instead. Symbols,
+    digits and punctuation never flag (so "₹499", "…" and "ORD-101" pass),
+    and Devanagari stays allowed so Hinglish output still passes under any
+    language setting.
+    """
+    for ch in text:
+        if not unicodedata.category(ch).startswith("L"):
+            continue
+        name = unicodedata.name(ch, "")
+        if "LATIN" not in name and "DEVANAGARI" not in name:
+            return True
+    return False
 
 
 def normalize_order_id(raw: str | None) -> str | None:

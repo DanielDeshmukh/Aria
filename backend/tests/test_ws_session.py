@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 
 import pytest
 
@@ -324,5 +325,135 @@ def test_messages_before_start_are_ignored() -> None:
         assert box.events == []
         assert stt.audio == []
         assert stt.started is False
+
+    asyncio.run(scenario())
+
+
+def test_foreign_script_final_asks_repeat_no_llm() -> None:
+    """language=multi mis-detection repro: a Telugu final at conf 0.98 must
+    take the canned-repeat path, never an LLM turn."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("థాంక్యూ", 0.98)
+        await wait_until(
+            lambda: any(m.get("text") == REPEAT for m in box.of("transcript")),
+            what="canned repeat for foreign-script final",
+        )
+        assert llm.chat_calls == 0
+        assert box.of("tool") == []
+        assert session.transcript[1] == {"role": "customer", "text": "థాంక్యూ"}
+
+    asyncio.run(scenario())
+
+
+def test_interim_resets_idle_timer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Interims streaming mid-sentence must restart the countdown — the nudge
+    fires only after the customer actually stops talking."""
+
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.3)
+    # this test targets the interim reset, not the fresh-speech guard (which
+    # has its own test) — shrink the guard window so the nudge lands fast
+    monkeypatch.setattr(session_mod, "SPEECH_FRESH_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        # talk continuously across the original deadline (0.3 s)
+        for i in range(16):
+            await stt.emit_interim(f"let me think about that order {i}")
+            await asyncio.sleep(0.05)
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "nudge fired while the customer was speaking"
+        await wait_until(
+            lambda: any(m.get("text") == STILL_THERE for m in box.of("transcript")),
+            what="nudge after speech stops",
+            timeout=2.0,
+        )
+
+    asyncio.run(scenario())
+
+
+def test_speech_start_resets_idle_timer_while_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.3)
+    monkeypatch.setattr(session_mod, "SPEECH_FRESH_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        await asyncio.sleep(0.15)  # half way to the original deadline
+        await stt.emit_speech_start()
+        await asyncio.sleep(0.18)  # original deadline (0.3) has passed
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "nudge fired although speech-start reset the timer"
+        await wait_until(
+            lambda: any(m.get("text") == STILL_THERE for m in box.of("transcript")),
+            what="nudge after the fresh window",
+            timeout=2.0,
+        )
+
+    asyncio.run(scenario())
+
+
+def test_silence_never_fires_on_fresh_speech(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hard guard inside _silence_fire: even if a reset was missed, a fire
+    requires SPEECH_FRESH_SECONDS of quiet since the last speech signal."""
+
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.1)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        await asyncio.sleep(0.05)
+        session._last_user_speech_at = time.monotonic()  # spoke right now
+        await asyncio.sleep(0.08)  # deadline passes; guard must re-arm
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "nudge fired within the fresh-speech window"
+        assert session._silence_task is not None, "guard must re-arm, not drop"
+        session._last_user_speech_at = time.monotonic() - 999  # quiet for ages
+        await wait_until(
+            lambda: any(m.get("text") == STILL_THERE for m in box.of("transcript")),
+            what="nudge once speech ages out",
+            timeout=2.0,
+        )
+
+    asyncio.run(scenario())
+
+
+def test_cancel_order_tool_turn_confirmed() -> None:
+    """Session plumbing: the cancel_order tool event executes through
+    _execute_tool and its structured result rides the tool event."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                rounds=[
+                    ("tool", "cancel_order", {"order_id": "ORD-103", "confirmed": True}),
+                    ("text", "Done — ORD-103 is cancelled."),
+                ]
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("cancel my order 103")
+        await wait_until(lambda: box.of("tool"), what="cancel tool event")
+        tool = box.of("tool")[0]
+        assert tool["name"] == "cancel_order"
+        assert tool["args"] == {"order_id": "ORD-103", "confirmed": True}
+        assert tool["result"]["cancelled"] is True
+        assert tool["result"]["order_id"] == "ORD-103"
+        await wait_until(
+            lambda: any(
+                "ORD-103 is cancelled" in m.get("text", "")
+                for m in box.of("transcript")
+                if m["role"] == "agent"
+            ),
+            what="cancellation reply",
+        )
 
     asyncio.run(scenario())

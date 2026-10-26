@@ -75,9 +75,77 @@ def test_unknown_tool_name() -> None:
 
 def test_tool_schemas_shape() -> None:
     names = [t["function"]["name"] for t in tools.TOOL_SCHEMAS]
-    assert names == ["get_order_details", "get_policy_info", "end_call"]
+    assert names == ["get_order_details", "cancel_order", "get_policy_info", "end_call"]
     for t in tools.TOOL_SCHEMAS:
         assert t["type"] == "function"
         assert "parameters" in t["function"]
     params = tools.TOOL_SCHEMAS[0]["function"]["parameters"]
     assert params["required"] == ["order_id"]
+    cancel_params = tools.TOOL_SCHEMAS[1]["function"]["parameters"]
+    assert cancel_params["required"] == ["order_id", "confirmed"]
+    assert cancel_params["properties"]["confirmed"]["type"] == "boolean"
+
+
+def test_cancel_order_requires_confirmed_true() -> None:
+    """The confirmation gate lives in code: confirmed=false refuses with a
+    read-back instruction even though ORD-103 is eligible."""
+    result = tools.dispatch(
+        "cancel_order", {"order_id": "ORD-103", "confirmed": False}
+    )
+    assert result["cancelled"] is False
+    assert result["error"] == "NOT_CONFIRMED"
+    assert result["order_id"] == "ORD-103"
+    assert "read back" in result["message"].lower()
+    assert "explicit yes" in result["message"].lower()
+    # dispatch must treat non-boolean truthy values as NOT confirmed
+    result = tools.dispatch("cancel_order", {"order_id": "ORD-103", "confirmed": "true"})
+    assert result["cancelled"] is False
+    assert result["error"] == "NOT_CONFIRMED"
+
+
+def test_cancel_order_happy_path_ord_103() -> None:
+    result = tools.dispatch(
+        "cancel_order", {"order_id": "ORD-103", "confirmed": True}
+    )
+    assert result["cancelled"] is True
+    assert result["order_id"] == "ORD-103"
+    assert result["status"] == "Cancelled"
+    assert "ORD-103" in result["message"]
+    # mock database stays read-only
+    assert tools.ORDERS["ORD-103"]["status"] == "Processing"
+
+
+def test_cancel_order_ineligible_ord_101_refusal_note() -> None:
+    result = tools.dispatch(
+        "cancel_order", {"order_id": "ORD-101", "confirmed": True}
+    )
+    assert result["cancelled"] is False
+    assert result["error"] == "INELIGIBLE"
+    assert "refuse delivery" in result["reason"]
+    assert result["order"]["status"] == "Out for Delivery"
+
+
+def test_cancel_order_ineligible_ord_102_delivered() -> None:
+    result = tools.dispatch(
+        "cancel_order", {"order_id": "ORD-102", "confirmed": True}
+    )
+    assert result["cancelled"] is False
+    assert result["error"] == "INELIGIBLE"
+    assert "Delivered" in result["reason"]
+
+
+def test_cancel_order_unknown_id() -> None:
+    result = tools.dispatch(
+        "cancel_order", {"order_id": "ORD-999", "confirmed": True}
+    )
+    assert result["cancelled"] is False
+    assert result["error"] == "NOT_FOUND"
+    assert result["message"] == NOT_FOUND_MSG
+
+
+def test_cancel_order_no_readable_id() -> None:
+    result = tools.dispatch("cancel_order", {"order_id": "just now", "confirmed": True})
+    assert result["cancelled"] is False
+    assert result["error"] == "NO_ORDER_ID"
+    assert result["needs_id"] is True
+    assert "ask the customer" in result["message"].lower()

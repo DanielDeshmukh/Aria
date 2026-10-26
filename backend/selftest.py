@@ -19,7 +19,7 @@ from .config import get_settings
 
 DEEPGRAM_WS_URL = (
     "wss://api.deepgram.com/v1/listen"
-    "?model=nova-3&language=multi&encoding=linear16&sample_rate=16000"
+    "?model=nova-3&language={language}&encoding=linear16&sample_rate=16000"
 )
 SARVAM_WS_URL = "wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v4-flash"
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
@@ -40,7 +40,7 @@ async def _probe_deepgram_ws() -> tuple[bool, str]:
     if not key:
         return False, "DEEPGRAM_API_KEY missing"
     ws = await websockets.connect(
-        DEEPGRAM_WS_URL,
+        DEEPGRAM_WS_URL.format(language=get_settings().stt_language),
         additional_headers={"Authorization": f"Token {key}"},
         open_timeout=CONNECT_TIMEOUT,
         close_timeout=5,

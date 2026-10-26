@@ -14,6 +14,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 from . import tools as tools_mod
+from .normalize import has_foreign_script
 from .prompts import SYSTEM_PROMPT
 from .splitter import split_sentences
 from .summary import build_summary, fallback_summary
@@ -24,6 +25,10 @@ GREETING = "Hi, this is Aria from Aura Skincare. How can I help you today?"
 REPEAT = "Sorry, I didn't catch that. Could you please repeat?"
 STILL_THERE = "Are you still there? I'm happy to help if you need anything."
 SILENCE_SECONDS = 9.0
+# The nudge must never fire while the customer is talking: interims restart
+# the 9 s countdown, and a fire additionally requires this much quiet since
+# the last speech signal (interim or SpeechStarted).
+SPEECH_FRESH_SECONDS = 2.0
 LOW_CONFIDENCE = 0.55
 INTERIM_MIN_INTERVAL = 0.2
 # Vercel Functions (Hobby) kill WebSockets at maxDuration = 300 s: warn the
@@ -54,6 +59,7 @@ class CallSession:
         self._stats_sent = False
         self._tool_lookup_ms: float | None = None
         self._last_interim_at = 0.0
+        self._last_user_speech_at = 0.0
         self._still_there_sent = False
         self._warn_handle: asyncio.TimerHandle | None = None
         self._end_handle: asyncio.TimerHandle | None = None
@@ -136,11 +142,18 @@ class CallSession:
             return
         if not is_final:
             text = (text or "").strip()
+            now = time.monotonic()
+            if text:
+                # Interims stream while the customer talks: mark the speech
+                # and restart the idle countdown so "still there?" can never
+                # fire mid-sentence (finals alone arrive too late).
+                self._last_user_speech_at = now
+                if self.state == "listening":
+                    self._arm_silence()
             # Deepgram does not emit SpeechStarted on our live config; a real
             # interim during our audio is the reliable barge-in signal.
             if text and self.state in ("speaking", "thinking"):
                 await self._on_speech_start()
-            now = time.monotonic()
             if now - self._last_interim_at >= INTERIM_MIN_INTERVAL:
                 self._last_interim_at = now
                 await self.send(
@@ -161,7 +174,12 @@ class CallSession:
         await self.send(
             {"type": "transcript", "role": "customer", "text": text, "final": True}
         )
-        if confidence is not None and confidence < LOW_CONFIDENCE:
+        if (confidence is not None and confidence < LOW_CONFIDENCE) or has_foreign_script(
+            text
+        ):
+            # Unclear audio, or a final in a script outside Latin/Devanagari
+            # (the language=multi Telugu mis-detection): never act on it —
+            # same canned path as low confidence, no LLM turn.
             await self._canned_speak(REPEAT)
             return
         await self._start_turn(user_text=text)
@@ -169,10 +187,14 @@ class CallSession:
     async def _on_speech_start(self) -> None:
         if self._closing or self._ended or not self._started:
             return
+        self._last_user_speech_at = time.monotonic()
         if self.state in ("speaking", "thinking"):
             await self._cancel_turn()
             await self.send({"type": "barge_in"})
             await self._set_state("listening")
+            self._arm_silence()
+        elif self.state == "listening":
+            # customer speech while idle: restart the idle countdown
             self._arm_silence()
 
     async def _on_playback_done(self) -> None:
@@ -350,6 +372,12 @@ class CallSession:
         except asyncio.CancelledError:
             return
         if self._closing or self._ended or self._still_there_sent:
+            return
+        if time.monotonic() - self._last_user_speech_at < SPEECH_FRESH_SECONDS:
+            # the customer spoke too recently for this deadline (mid-sentence
+            # burst the interim resets may have missed) — restart, never
+            # interrupt
+            self._arm_silence()
             return
         self._still_there_sent = True
         try:

@@ -1,10 +1,14 @@
-"""Deepgram streaming STT (nova-3, language=multi, keyterm ORD ids).
+"""Deepgram streaming STT (nova-3, language from config, keyterm ORD ids).
 
-language=multi (not en-IN): en-IN returned an empty conf=0.0 final for the
-Hinglish runbook line "Mera order kahan hai?" while multi transcribes it at
-conf 1.0 with equal English quality. No I/O in the constructor: `start()`
-opens the socket so missing-key / network failures surface as the session's
-error event, never at import.
+Language is the single config value `settings.stt_language` (default multi).
+multi is the default because en-IN dead-drops Hinglish utterances — measured
+live: 0 finals for "Mera order kahan hai?" under en-IN vs conf 1.0 under
+multi. multi can mis-detect a short English line as another script (Telugu
+seen live for "thank you"); normalize.has_foreign_script catches those
+finals in session.py and they become the canned "please repeat" — never an
+LLM turn. Set STT_LANGUAGE=en-IN for English-only deployments. No I/O in
+the constructor: `start()` opens the socket so missing-key / network
+failures surface as the session's error event, never at import.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ SpeechStartCb = Callable[[], Awaitable[None]]
 
 DEEPGRAM_WS_URL = (
     "wss://api.deepgram.com/v1/listen"
-    "?model=nova-3&language=multi&encoding=linear16&sample_rate={sample_rate}"
+    "?model=nova-3&language={language}&encoding=linear16&sample_rate={sample_rate}"
     "&interim_results=true&endpointing=300&smart_format=true"
     "&keyterm=ORD&keyterm=ORD-101&keyterm=ORD-102&keyterm=ORD-103"
 )
@@ -81,14 +85,13 @@ class DeepgramSTT:
         self._on_speech_start: SpeechStartCb | None = None
 
     async def start(self, on_transcript: TranscriptCb, on_speech_start: SpeechStartCb) -> None:
-        key = (
-            self._api_key
-            if self._api_key is not None
-            else get_settings().deepgram_api_key
-        )
+        settings = get_settings()
+        key = self._api_key if self._api_key is not None else settings.deepgram_api_key
         if not key:
             raise RuntimeError("DEEPGRAM_API_KEY missing")
-        url = DEEPGRAM_WS_URL.format(sample_rate=self.sample_rate)
+        url = DEEPGRAM_WS_URL.format(
+            sample_rate=self.sample_rate, language=settings.stt_language
+        )
         self._on_transcript = on_transcript
         self._on_speech_start = on_speech_start
         self._ws = await websockets.connect(

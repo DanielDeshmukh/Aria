@@ -1,4 +1,4 @@
-from backend.normalize import normalize_order_id
+from backend.normalize import has_foreign_script, normalize_order_id
 
 CASES = {
     "O R D one oh one": "ORD-101",
@@ -52,3 +52,23 @@ def test_four_digit_ids_keep_all_digits() -> None:
 def test_unrecognized_ids_return_none() -> None:
     for raw in ("?", "my product arrived broken, just now", "ORD two", "Can I cancel ORD?"):
         assert normalize_order_id(raw) is None, raw
+
+
+def test_foreign_script_flags_non_latin_devanagari_letters() -> None:
+    # live repro of the language=multi mis-detection: short English lines
+    # coming back as Telugu (or other) finals
+    assert has_foreign_script("థాంక్యూ") is True  # Telugu "thank you"
+    assert has_foreign_script("నాకు ఆర్డర్ కావాలి") is True  # Telugu words
+    assert has_foreign_script("спасибо") is True  # Cyrillic
+    assert has_foreign_script("ありがとう") is True  # Japanese
+    assert has_foreign_script("مرحبا") is True  # Arabic
+
+
+def test_foreign_script_allows_latin_devanagari_and_symbols() -> None:
+    assert has_foreign_script("") is False
+    assert has_foreign_script("Thank you so much!") is False
+    assert has_foreign_script("Mera order kahan hai?") is False
+    assert has_foreign_script("Café résumé — naïve") is False
+    assert has_foreign_script("मेरा ऑर्डर कहाँ है?") is False  # Devanagari Hinglish
+    assert has_foreign_script("Order ORD-101 is ₹499 · 7 days…") is False
+    assert has_foreign_script("don't — it's ORD-102's") is False

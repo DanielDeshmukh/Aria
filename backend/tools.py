@@ -55,6 +55,37 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "cancel_order",
+            "description": (
+                "Cancel an order that is still Processing. Gated: first read back "
+                "the order id and product and get an explicit yes from the "
+                "customer, ONLY THEN call with confirmed=true. Returns structured "
+                "NOT_CONFIRMED, NOT_FOUND or INELIGIBLE (with the policy reason) "
+                "results instead of cancelling. Never mutates data beyond this "
+                "structured result."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {
+                        "type": "string",
+                        "description": "Order id, spoken forms allowed (ORD-101, 101, ORD 101)",
+                    },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": (
+                            "true ONLY after the customer explicitly confirmed the "
+                            "read-back; false previews eligibility without cancelling"
+                        ),
+                    },
+                },
+                "required": ["order_id", "confirmed"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_policy_info",
             "description": "Fetch the exact Aura Skincare policy text on a topic.",
             "parameters": {
@@ -119,6 +150,61 @@ def get_order_details(order_id: str) -> dict:
     return {"found": True, "order": order, "flags": flags}
 
 
+def cancel_order(order_id: str, confirmed: bool) -> dict:
+    """Confirm-gated cancellation: eligibility comes from policy, and the tool
+    refuses unless the customer explicitly confirmed (confirmed=True). The
+    mock database is never mutated — the result is structured data only."""
+    normalized = normalize_order_id(order_id)
+    if normalized is None:
+        return {
+            "cancelled": False,
+            "error": "NO_ORDER_ID",
+            "requested": order_id,
+            "needs_id": True,
+            "message": (
+                "No readable order id was given. Ask the customer to say the "
+                "order id again."
+            ),
+        }
+    order = get_order(normalized)
+    if order is None:
+        return {
+            "cancelled": False,
+            "error": "NOT_FOUND",
+            "requested": order_id,
+            "message": NOT_FOUND_MESSAGE,
+        }
+    verdict = policy.cancellation(order)
+    if not verdict["cancellable"]:
+        # ORD-101's reason carries the refuse-at-the-doorstep note; ORD-102
+        # gets the already-delivered reason — both straight from policy.py.
+        return {
+            "cancelled": False,
+            "error": "INELIGIBLE",
+            "order_id": normalized,
+            "order": order,
+            "cancellable": False,
+            "reason": verdict["cancel_reason"],
+        }
+    if not confirmed:
+        return {
+            "cancelled": False,
+            "error": "NOT_CONFIRMED",
+            "order_id": normalized,
+            "message": (
+                "The customer has not confirmed yet. Read back the order id and "
+                "product, get an explicit yes, then call again with confirmed=true."
+            ),
+        }
+    return {
+        "cancelled": True,
+        "order_id": normalized,
+        "order": order,
+        "status": "Cancelled",
+        "message": f"Order {normalized} is cancelled.",
+    }
+
+
 def get_policy_info(topic: str) -> dict:
     if topic not in policy.POLICY_TEXT:
         return {"error": "UNKNOWN_TOPIC", "available": sorted(policy.POLICY_TEXT)}
@@ -132,6 +218,9 @@ def end_call() -> dict:
 def dispatch(name: str, args: dict) -> dict:
     if name == "get_order_details":
         return get_order_details(str(args.get("order_id", "")))
+    if name == "cancel_order":
+        # `is True` so a truthy string ("false") can never pass the gate.
+        return cancel_order(str(args.get("order_id", "")), args.get("confirmed") is True)
     if name == "get_policy_info":
         return get_policy_info(str(args.get("topic", "")))
     if name == "end_call":
