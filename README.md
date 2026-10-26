@@ -27,7 +27,7 @@ https://danieldeshmukh.github.io/aria-demo-link/ — headphones recommended.)
 **LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
 
 **Current status (2026-10-26):** all four assignment phases are shipped —
-169 tests green locally (158 pass + 11 provider-key tests skip in CI, which
+169 tests green locally (157 pass + 12 provider-key tests skip in CI, which
 has no secrets), the 14-scenario runbook passes 14/14 on the production
 path (and 14/14 on the earlier public tunnel URL), and the site nav lists
 every section at clean paths (`/call`, `/pipeline` — no hash URLs anywhere).
