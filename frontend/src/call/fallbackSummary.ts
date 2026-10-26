@@ -56,6 +56,7 @@ function normalizeOrderId(line: string): string | null {
 
 export function clientFallbackSummary(
   transcript: TranscriptEntry[],
+  tools: ReadonlyArray<{ name: string }> = [],
 ): Record<string, unknown> {
   const customerLines = transcript
     .filter((t) => t.final && t.role === "customer" && t.text.trim())
@@ -72,6 +73,8 @@ export function clientFallbackSummary(
       break;
     }
   }
+  // Tool events beat keyword guessing (mirrors backend _intent_from_tools).
+  if (tools.some((t) => t.name === "cancel_order")) intent = "CANCELLATION";
 
   let orderId: string | null = null;
   for (const line of [...customerLines, ...agentLines]) {

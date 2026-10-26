@@ -9,7 +9,15 @@ from backend import selftest as selftest_mod
 from backend.config import get_settings
 from backend.stt import DEEPGRAM_WS_URL
 
-KEYTERMS = ("keyterm=ORD&", "keyterm=ORD-101", "keyterm=ORD-102", "keyterm=ORD-103")
+KEYTERMS = (
+    "keyterm=ORD&",
+    "keyterm=ORD-101",
+    "keyterm=ORD-102",
+    "keyterm=ORD-103",
+    "keyterm=sunscreen",
+    "keyterm=serum",
+    "keyterm=toner",
+)
 
 
 @pytest.fixture(autouse=True)

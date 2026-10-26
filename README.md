@@ -27,8 +27,8 @@ https://danieldeshmukh.github.io/aria-demo-link/ — headphones recommended.)
 **LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
 
 **Current status (2026-10-26):** all four assignment phases are shipped —
-205 tests green locally (193 pass + 12 provider-key tests skip in CI, which
-has no secrets), the 14-scenario runbook passes 14/14 on the production
+230 tests in the suite (212 pass offline; in CI without secrets 218 pass + 12
+provider-key tests skip), the 14-scenario runbook passes 14/14 on the production
 path (and 14/14 on the earlier public tunnel URL), and the site nav lists
 every section at clean paths (`/call`, `/pipeline` — no hash URLs anywhere).
 The code is Vercel-ready (multi-service `vercel.json`: FastAPI + Vite, Fluid
@@ -202,7 +202,7 @@ Aria/
 │   ├── data/orders.json     #   ORD-101..103 fixtures
 │   ├── scripts/             #   probe_sarvam, text_harness, ws_smoke
 │   │                        #   (remote WS greeting+summary probe)
-│   └── tests/               #   205 tests (hermetic + live smoke tests)
+│   └── tests/               #   230 tests (hermetic + live smoke tests)
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React product site (Vite + Tailwind)
 │   ├── src/
@@ -298,7 +298,7 @@ npx tsc --noEmit        # typecheck
 npm run build           # production build (dist/ must exist)
 cd ..
 pip install -r requirements-dev.txt
-python -m pytest -v     # full suite: 205 tests (see table below)
+python -m pytest -v     # full suite: 230 tests (see table below)
 ```
 
 Run the suite any time from the repo root (SPA tests auto-skip if

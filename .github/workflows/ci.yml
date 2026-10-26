@@ -26,6 +26,10 @@ jobs:
         working-directory: frontend
         run: npx tsc --noEmit
 
+      - name: Frontend unit tests (End Call path)
+        working-directory: frontend
+        run: npm test
+
       - name: Build frontend (dist must exist so SPA tests run)
         working-directory: frontend
         run: npm run build

@@ -38,6 +38,8 @@ DEEPGRAM_WS_URL = (
     # synthesis, not endpointing).
     "&interim_results=true&endpointing=800&smart_format=true"
     "&keyterm=ORD&keyterm=ORD-101&keyterm=ORD-102&keyterm=ORD-103"
+    # product names the customer says softly or with an Indian accent
+    "&keyterm=sunscreen&keyterm=serum&keyterm=toner"
 )
 
 

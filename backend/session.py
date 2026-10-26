@@ -101,6 +101,27 @@ DANGLING_FINAL_WORDS = frozenset(
 CALL_ENDING_SOON_SECONDS = 270.0
 CALL_FORCE_END_SECONDS = 295.0
 
+# --- agent-initiated end (end_call tool) + bounded summary ------------------
+# Hard budget for the POST-CALL summary: the ended message must leave within
+# this even when the summary LLM hangs or 429s - production once left the page
+# in LISTENING until the socket dropped, because _end awaited an unbounded
+# build_summary (the SDK's own retry slept ~52 s after a 429; the client now
+# runs with max_retries=0 and the chain is wrapped in wait_for below).
+# On timeout/error the deterministic fallback is used instead.
+SUMMARY_TIMEOUT_SECONDS = 6.0
+# stt.close() runs its own websockets close_timeout (5 s) - bound it so a
+# wedged Deepgram socket cannot delay summary + ended. It runs CONCURRENTLY
+# with the summary, so the whole handler stays within max(STT_CLOSE,
+# SUMMARY_TIMEOUT) ~ 6 s, not the sum of the two.
+STT_CLOSE_TIMEOUT_SECONDS = 1.0
+# After the end_call tool the session wraps up on its own: normally this long
+# after the LAST farewell sentence was sent (covers its estimated playback +
+# margin), independent of playback_done and the idle timers.
+FAREWELL_END_SECONDS = 5.0
+# Absolute cap from end_call execution: if the model never speaks a farewell
+# (crash, hang, empty turn) the call still ends with summary + ended.
+END_CALL_MAX_SECONDS = 8.0
+
 
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
@@ -164,6 +185,9 @@ class CallSession:
         self._last_playback_done_at = 0.0
         self._warn_handle: asyncio.TimerHandle | None = None
         self._end_handle: asyncio.TimerHandle | None = None
+        # Agent-initiated end: one-shot deadline (see _request_end_call).
+        self._end_call_requested = False
+        self._farewell_end_handle: asyncio.TimerHandle | None = None
         # Tool outcomes recorded for the post-call summary fallback (facts,
         # never raw transcript lines) - see _execute_tool.
         self.tool_log: list[dict] = []
@@ -171,6 +195,13 @@ class CallSession:
         self._audio_bytes_sent = 0
         self._audio_bytes_acked = 0
         self._bytes_per_sec: float | None = None
+
+    @property
+    def ended(self) -> bool:
+        """True once the end path started (summary/ended being produced).
+        main.py stops its receive loop after an end message returns, but a
+        farewell-timer end runs in its own task - both sides use this flag."""
+        return self._ended
 
     # ------------------------------------------------------------------ wire
     async def handle(self, msg: Any) -> None:
@@ -185,6 +216,11 @@ class CallSession:
         elif typ == "playback_done":
             await self._on_playback_done()
         elif typ == "end":
+            logger.info(
+                "end message received (state=%s already_ended=%s)",
+                self.state,
+                self._ended,
+            )
             await self._end()
 
     async def close(self) -> None:
@@ -192,6 +228,7 @@ class CallSession:
             return
         self._closing = True
         self._cancel_call_deadlines()
+        self._cancel_farewell_end()
         await self._cancel_turn()
         self._cancel_silence()
         self._cancel_hold()
@@ -496,34 +533,76 @@ class CallSession:
         self._arm_silence()
 
     async def _end(self) -> None:
+        # Idempotent: repeat "end" clicks while a previous _end is still
+        # summarising return immediately; the first one always delivers
+        # summary + ended.
         if self._ended or self._closing:
             return
         self._ended = True
+        logger.info("end path started - cancelling timers/turn, then summary")
         self._cancel_call_deadlines()
+        self._cancel_farewell_end()
         await self._cancel_turn()
         self._cancel_silence()
         self._cancel_hold()
         self._cancel_estimate()
+        # Close STT CONCURRENTLY with the summary: total end-handler wait is
+        # max(stt close, summary budget) ~ 6 s, never their sum.
+        stt_close = asyncio.create_task(self._close_stt())
+        summary = await self._summary_with_deadline()
         try:
-            await self.stt.close()
+            await stt_close
         except Exception:
-            pass
+            pass  # _close_stt logs its own failures; never block the sends
+        # summary first (the client's terminal event), then state - and never
+        # let a dead socket raise out of _end before the second one is tried.
         try:
-            summary = await build_summary(
-                self.llm, self.transcript, self.tool_log
+            await self.send(
+                {
+                    "type": "summary",
+                    "transcript": list(self.transcript),
+                    "summary": summary,
+                }
             )
+            await self._set_state("ended")
+        except Exception:
+            logger.warning(
+                "could not deliver summary/ended - socket already gone?",
+                exc_info=True,
+            )
+
+    async def _close_stt(self) -> None:
+        """Bounded STT shutdown: a wedged Deepgram socket must never hold the
+        end handler open (runs as its own task alongside the summary)."""
+        try:
+            await asyncio.wait_for(self.stt.close(), STT_CLOSE_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "stt.close did not finish within %.1fs - continuing to summary",
+                STT_CLOSE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.debug("stt.close raised - continuing to summary", exc_info=True)
+
+    async def _summary_with_deadline(self) -> dict:
+        """build_summary under a hard wall-clock budget. On timeout or any
+        failure the deterministic fallback is returned, so the ended message
+        ALWAYS carries a summary - even when the summary LLM hangs."""
+        try:
+            return await asyncio.wait_for(
+                build_summary(self.llm, self.transcript, self.tool_log),
+                timeout=SUMMARY_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "summary LLM timed out after %.1fs - using structured fallback",
+                SUMMARY_TIMEOUT_SECONDS,
+            )
+            return fallback_summary(self.transcript, self.tool_log)
         except Exception:
             # build_summary logs its own reasons; this is the last resort.
             logger.exception("summary build raised - using structured fallback")
-            summary = fallback_summary(self.transcript, self.tool_log)
-        await self.send(
-            {
-                "type": "summary",
-                "transcript": list(self.transcript),
-                "summary": summary,
-            }
-        )
-        await self._set_state("ended")
+            return fallback_summary(self.transcript, self.tool_log)
 
     async def _fail(self, message: str) -> None:
         if self._closing or self._ended:
@@ -612,6 +691,11 @@ class CallSession:
                 # real audio is still playing: wait for playback_done, with
                 # the duration estimate as the fallback
                 self._schedule_estimate()
+        if self._end_call_requested and not self._ended:
+            # The farewell (or whatever the model said after end_call) is
+            # fully sent: end quietly FAREWELL_END_SECONDS from now - the
+            # deadline must not depend on playback_done or the idle timers.
+            self._arm_farewell_end(FAREWELL_END_SECONDS)
 
     def _execute_tool(self, name: str, args: dict) -> dict:
         """dispatch() plus capture of the lookup timing for the stats event
@@ -625,7 +709,54 @@ class CallSession:
             )
         except Exception:
             logger.debug("tool_log append failed", exc_info=True)
+        if name == "end_call":
+            self._request_end_call()
         return result
+
+    # -------------------------------------------------------- agent end path
+    def _request_end_call(self) -> None:
+        """The model chose to wrap the call up: schedule a quiet end that does
+        NOT depend on playback_done or the idle timers (production showed
+        both can misbehave and leave the page in LISTENING forever).
+
+        A hard cap arms immediately (END_CALL_MAX_SECONDS from this tool
+        execution); when the farewell is actually spoken, _run_turn re-arms it
+        to FAREWELL_END_SECONDS after the last sentence was sent - roughly
+        goodbye-audio playback + margin."""
+        if self._end_call_requested or self._ended or self._closing:
+            return
+        self._end_call_requested = True
+        logger.info(
+            "end_call tool - arming quiet end: cap %.0fs from tool, "
+            "then %.0fs after the farewell",
+            END_CALL_MAX_SECONDS,
+            FAREWELL_END_SECONDS,
+        )
+        self._arm_farewell_end(END_CALL_MAX_SECONDS)
+
+    def _arm_farewell_end(self, delay: float) -> None:
+        self._cancel_farewell_end()
+        if self._ended or self._closing:
+            return
+        loop = asyncio.get_running_loop()
+        self._farewell_end_handle = loop.call_later(
+            delay, self._on_farewell_deadline
+        )
+
+    def _cancel_farewell_end(self) -> None:
+        handle = self._farewell_end_handle
+        self._farewell_end_handle = None
+        if handle is not None:
+            handle.cancel()
+
+    def _on_farewell_deadline(self) -> None:
+        self._farewell_end_handle = None
+        if self._ended or self._closing:
+            return
+        logger.info(
+            "farewell deadline elapsed - ending call (summary + ended)"
+        )
+        asyncio.create_task(self._force_end())
 
     async def _flush(self, buffer: str, final: bool = False) -> str:
         sentences, rest = split_sentences(buffer)

@@ -1,13 +1,19 @@
 """Groq LLM client (OpenAI-compatible): streaming text deltas + tool-call loop.
 
-Resilience: one short backoff retry per model on 429, then a fallback model
-chain (primary -> GROQ_FALLBACK_MODEL, a smaller tool-capable Groq model);
-when the whole chain fails it raises LLMUnavailableError, which the session
-answers with a spoken apology instead of dying. Every completed turn logs the
-model that answered plus approximate token usage (~4 chars/token).
+Resilience: the SDK's built-in retries are DISABLED (max_retries=0) so a 429
+can never make the SDK sleep ~52 s inside an awaited handler - the incident
+that hung the end-of-call path. Only this module handles 429s: one short
+backoff retry per model, a 60 s circuit breaker per rate-limited model
+(Retry-After capped at 60 s) so subsequent turns go straight to the fallback
+chain, then LLMUnavailableError when the chain fails (including "every model
+is cooling down", which skips the summary request entirely so the session
+falls straight back to the deterministic summary). Every completed turn logs
+the model that answered with the API's REAL usage numbers (stream_options
+include_usage; chars/4 only as a labelled fallback) plus a chars breakdown of
+what the prompt was made of (system/tools/history/tool_results).
 
-Pure helpers `feed_chunk` / `finalize_round` are unit-tested without a key.
-Key access is via backend.config only (repr-safe).
+Pure helpers `feed_chunk` / `finalize_round` / `prompt_breakdown` are
+unit-tested without a key. Key access is via backend.config only (repr-safe).
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, AsyncIterator, Callable
 
 import openai
@@ -27,6 +34,10 @@ logger = logging.getLogger("backend.llm")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 # One short retry on 429 per model before falling through the chain.
 RETRY_BACKOFF_SECONDS = 0.5
+# Circuit breaker: a model that returned 429 is skipped for this long, or
+# the response's Retry-After value - whichever is smaller (hard cap 60 s).
+COOLDOWN_SECONDS = 60.0
+COOLDOWN_CAP_SECONDS = 60.0
 
 
 class LLMUnavailableError(Exception):
@@ -44,6 +55,20 @@ def _o(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+
+def _chunk_usage(chunk: Any) -> tuple[int, int] | None:
+    """(prompt_tokens, completion_tokens) from a stream chunk, if present.
+    Emitted by Groq only when stream_options.include_usage is set - the final
+    chunk before [DONE] carries usage (top-level, or under x_groq.usage)."""
+    usage = _o(chunk, "usage") or _o(_o(chunk, "x_groq"), "usage")
+    if not isinstance(usage, dict):
+        return None
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    if prompt is None and completion is None:
+        return None
+    return (int(prompt or 0), int(completion or 0))
 
 
 class RoundAccumulator:
@@ -102,6 +127,24 @@ def finalize_round(acc: RoundAccumulator) -> tuple[str, list[dict]]:
     return text, calls
 
 
+def prompt_breakdown(messages: list[dict], tools: list[dict] | None) -> dict:
+    """Chars of ONE actual request, split by part: system / tool schemas /
+    conversation history / tool results. Diagnostic composition only - the
+    token numbers themselves come from the API's usage, never chars/4."""
+    parts = {"system": 0, "tools": 0, "history": 0, "tool_results": 0}
+    for msg in messages:
+        size = len(json.dumps(msg, ensure_ascii=False))
+        role = msg.get("role")
+        if role == "system":
+            parts["system"] += size
+        elif role == "tool":
+            parts["tool_results"] += size
+        else:
+            parts["history"] += size
+    parts["tools"] = len(json.dumps(tools or [], ensure_ascii=False))
+    return parts
+
+
 class GroqLLM:
     def __init__(self) -> None:
         settings = get_settings()
@@ -112,13 +155,77 @@ class GroqLLM:
                 chain.append(name)
         self.models = chain or ["openai/gpt-oss-120b"]
         self.model = self.models[0]
-        # Constructor must never raise on missing keys: request-time failures
-        # surface to the session, which reports a NAMES-only error event.
+        # max_retries=0: the SDK must NEVER sleep its own ~52 s backoff
+        # inside an awaited handler (root cause of the 60 s end-of-call
+        # hang). Only the chain below handles 429s. Constructor still never
+        # raises on missing keys: request-time failures surface to the session.
         self._client = AsyncOpenAI(
             api_key=settings.groq_api_key or "missing-groq-key",
             base_url=GROQ_BASE_URL,
             timeout=30.0,
+            max_retries=0,
         )
+        # Circuit breaker: model -> monotonic deadline while rate-limited.
+        self._cooldowns: dict[str, float] = {}
+
+    # ------------------------------------------------------------ breaker
+    @staticmethod
+    def _retry_after_seconds(exc: openai.RateLimitError) -> float:
+        raw = ""
+        try:
+            raw = (exc.response.headers.get("retry-after") or "").strip()
+        except Exception:
+            raw = ""
+        try:
+            seconds = float(raw)
+        except ValueError:
+            seconds = 0.0
+        if seconds <= 0:
+            seconds = COOLDOWN_SECONDS
+        return min(seconds, COOLDOWN_CAP_SECONDS)
+
+    def _mark_cooldown(self, model: str, exc: openai.RateLimitError) -> None:
+        seconds = self._retry_after_seconds(exc)
+        self._cooldowns[model] = time.monotonic() + seconds
+        logger.info(
+            "groq 429 on %s - cooling down for %.0fs (circuit breaker open)",
+            model,
+            seconds,
+        )
+
+    def _usable_models(self) -> list[str]:
+        """Models to try for this request: rate-limited ones are skipped so
+        turns go straight to the fallback while the breaker is open. Expired
+        cooldowns recover (logged). If every model is cooling, the full chain
+        is still attempted - a live attempt beats a guaranteed failure."""
+        now = time.monotonic()
+        usable: list[str] = []
+        for model in self.models:
+            deadline = self._cooldowns.get(model)
+            if deadline is None:
+                usable.append(model)
+            elif deadline > now:
+                logger.debug(
+                    "circuit breaker: %s cooling for %.0fs more - skipping",
+                    model,
+                    deadline - now,
+                )
+            else:
+                del self._cooldowns[model]
+                logger.info(
+                    "circuit breaker: %s cooldown elapsed - available again", model
+                )
+                usable.append(model)
+        return usable or list(self.models)
+
+    def all_cooling(self) -> bool:
+        """True when EVERY model in the chain has an active breaker cooldown.
+        complete() uses this to skip the summary request outright (the
+        session then logs the reason and ships the deterministic fallback)."""
+        if not self.models:
+            return False
+        now = time.monotonic()
+        return all(self._cooldowns.get(m, 0.0) > now for m in self.models)
 
     async def chat(
         self,
@@ -132,39 +239,58 @@ class GroqLLM:
 
         Runs the tool loop internally: tool results are appended to `messages`
         and a follow-up completion starts, until a round ends text-only.
-        Failure handling: 429 -> one backoff retry on the same model; a
-        persistent 429 or any other API error -> next model in the chain;
-        chain exhausted -> LLMUnavailableError.
+        Failure handling: 429 -> one backoff retry on the same model AND a
+        60 s circuit-breaker cooldown for it (later turns skip straight to
+        the fallback); a persistent 429 or any other API error -> next model
+        in the chain; chain exhausted -> LLMUnavailableError.
         """
         prompt_chars = 0
         completion_chars = 0
+        usage_prompt = 0
+        usage_completion = 0
+        has_usage = False
+        breakdown: dict = {}
         last_error: Exception | None = None
-        for model in self.models:
+        for model in self._usable_models():
             retried_429 = False
             while True:
                 acc = RoundAccumulator()
-                prompt_chars += len(json.dumps(messages, ensure_ascii=False)) + len(
-                    json.dumps(tools or [], ensure_ascii=False)
-                )
+                breakdown = prompt_breakdown(messages, tools)
+                # Chars only, for the composition breakdown; the token numbers
+                # in the log come from the API's usage (real median ~1,850
+                # prompt tokens/request - chars/4 was just a labelled fallback).
+                prompt_chars = max(prompt_chars, sum(breakdown.values()))
                 kwargs: dict[str, Any] = {
                     "model": model,
                     "messages": messages,
                     "stream": True,
+                    "stream_options": {"include_usage": True},
                     "temperature": 0.3,
                     "max_completion_tokens": 400,
                     "reasoning_effort": "low",  # reasoning models think by default; voice needs speed
                 }
                 if tools:
                     kwargs["tools"] = tools
+                round_usage: tuple[int, int] | None = None
                 try:
                     stream = await self._client.chat.completions.create(**kwargs)
                     async for chunk in stream:
+                        found = _chunk_usage(chunk)
+                        if found is not None:
+                            round_usage = found
                         for event in feed_chunk(acc, chunk):
                             yield event
+                    if round_usage is not None:
+                        # one usage chunk per request: sum across the turn's
+                        # tool-loop rounds for the real per-turn cost
+                        has_usage = True
+                        usage_prompt += round_usage[0]
+                        usage_completion += round_usage[1]
                 except asyncio.CancelledError:
                     raise
                 except openai.RateLimitError as exc:
                     last_error = exc
+                    self._mark_cooldown(model, exc)
                     if not retried_429:
                         retried_429 = True
                         logger.warning(
@@ -193,11 +319,18 @@ class GroqLLM:
                 if not calls:
                     if text:
                         messages.append({"role": "assistant", "content": text})
-                    self._report_turn(model, prompt_chars, completion_chars)
+                    usage = (usage_prompt, usage_completion) if has_usage else None
+                    self._report_turn(
+                        model, prompt_chars, completion_chars, breakdown, usage
+                    )
                     yield {
                         "type": "llm_stats",
                         "model": model,
-                        "approx_tokens": approx_tokens(prompt_chars)
+                        # real API tokens when the usage chunk arrived,
+                        # chars/4 estimate otherwise (labelled in the log)
+                        "approx_tokens": (usage_prompt + usage_completion)
+                        if has_usage
+                        else approx_tokens(prompt_chars)
                         + approx_tokens(completion_chars),
                     }
                     return
@@ -239,28 +372,58 @@ class GroqLLM:
         raise LLMUnavailableError(f"model chain failed: {detail}") from last_error
 
     @staticmethod
-    def _report_turn(model: str, prompt_chars: int, completion_chars: int) -> None:
-        """(d)+(e): which model answered and roughly how many tokens it cost."""
-        p_tokens = approx_tokens(prompt_chars)
-        c_tokens = approx_tokens(completion_chars)
+    def _report_turn(
+        model: str,
+        prompt_chars: int,
+        completion_chars: int,
+        breakdown: dict,
+        usage: tuple[int, int] | None = None,
+    ) -> None:
+        """Per-turn cost from the API's OWN usage numbers when available
+        (stream_options.include_usage); chars/4 only as a labelled fallback
+        for responses that carried no usage. The chars breakdown shows what
+        the prompt was made of - it is diagnostic, never a token count."""
+        if usage is not None:
+            p_tokens, c_tokens = usage
+            cost = f"tokens={p_tokens + c_tokens} (prompt={p_tokens} + completion={c_tokens}) [groq usage]"
+        else:
+            p_tokens = approx_tokens(prompt_chars)
+            c_tokens = approx_tokens(completion_chars)
+            cost = (
+                f"tokens~{p_tokens + c_tokens} (prompt~{p_tokens} + completion~{c_tokens}) "
+                "[chars/4 estimate - no usage chunk]"
+            )
         logger.info(
-            "groq turn: model=%s tokens~%d (prompt~%d + completion~%d)",
+            "groq turn: model=%s %s | prompt chars: system=%d tools=%d "
+            "history=%d tool_results=%d",
             model,
-            p_tokens + c_tokens,
-            p_tokens,
-            c_tokens,
+            cost,
+            breakdown.get("system", 0),
+            breakdown.get("tools", 0),
+            breakdown.get("history", 0),
+            breakdown.get("tool_results", 0),
         )
 
     async def complete(self, messages: list[dict]) -> str:
         """One-shot non-streaming completion (used by the summarizer).
 
-        Walks the SAME fallback chain as chat(): one 429 backoff retry per
-        model, then the next model, LLMUnavailableError once the chain is
-        exhausted. Before this, a rate limit at call end silently produced the
-        deterministic summary fallback - the exact bug this chain fixes.
+        Rides the SAME zero-retry client and fallback chain as chat(): one
+        429 backoff retry per model plus a breaker cooldown (so a summary
+        right after a rate-limited turn skips the cooled model entirely),
+        then the next model, LLMUnavailableError once the chain is
+        exhausted. When EVERY model is cooling the request is skipped
+        entirely - no API call at all - and the caller falls back to the
+        deterministic summary. The end handler wraps this in
+        wait_for(SUMMARY_TIMEOUT) so a slow chain can never hold the call.
         """
+        if self.all_cooling():
+            logger.info(
+                "groq summary skipped - every model is cooling down "
+                "(circuit breaker); deterministic fallback will be used"
+            )
+            raise LLMUnavailableError("all models cooling down (circuit breaker)")
         last_error: Exception | None = None
-        for model in self.models:
+        for model in self._usable_models():
             retried_429 = False
             while True:
                 try:
@@ -273,14 +436,27 @@ class GroqLLM:
                         reasoning_effort="low",
                     )
                     content = resp.choices[0].message.content or ""
-                    logger.info(
-                        "groq summary: model=%s chars=%d", model, len(content)
-                    )
+                    usage = _o(resp, "usage")
+                    prompt_tok = _o(usage, "prompt_tokens")
+                    if prompt_tok is not None:
+                        logger.info(
+                            "groq summary: model=%s chars=%d prompt_tokens=%d "
+                            "completion_tokens=%d [groq usage]",
+                            model,
+                            len(content),
+                            int(prompt_tok),
+                            int(_o(usage, "completion_tokens") or 0),
+                        )
+                    else:
+                        logger.info(
+                            "groq summary: model=%s chars=%d", model, len(content)
+                        )
                     return content
                 except asyncio.CancelledError:
                     raise
                 except openai.RateLimitError as exc:
                     last_error = exc
+                    self._mark_cooldown(model, exc)
                     if not retried_429:
                         retried_429 = True
                         logger.warning(

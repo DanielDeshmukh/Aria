@@ -14,6 +14,14 @@ DEFAULT_SUMMARY = {
 }
 
 
+class _Hang:
+    """Sentinel for FakeLLM(summary=...): complete() awaits forever - the
+    caller's timeout (asyncio.wait_for) must cancel it and fall back."""
+
+
+HANG = _Hang()
+
+
 class FakeSTT:
     def __init__(self, start_error: Exception | None = None) -> None:
         self.start_error = start_error
@@ -130,6 +138,9 @@ class FakeLLM:
 
     async def complete(self, messages) -> str:
         self.complete_calls += 1
+        if self.summary is HANG:
+            await asyncio.Event().wait()  # cancelled by the caller's timeout
+            return ""  # unreachable
         if isinstance(self.summary, Exception):
             raise self.summary
         if isinstance(self.summary, str):

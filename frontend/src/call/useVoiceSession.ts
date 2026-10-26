@@ -56,6 +56,21 @@ const INITIAL: SessionData = {
   notice: null,
 };
 
+/** After a local End Call the socket may linger this long ONLY to receive
+ * the server summary, then the client-side fallback takes over. The local
+ * close itself is synchronous with the click (mic, playback, ended view) and
+ * never waits for a server message. Backend budget is
+ * SUMMARY_TIMEOUT_SECONDS = 6 s (STT close runs concurrently with it), so
+ * 6.5 s = server budget + delivery margin - a late server summary still
+ * wins over the fallback. */
+export const END_SUMMARY_WAIT_MS = 6500;
+/** Shown whenever the summary was built locally instead of by the server. */
+const LOCAL_SUMMARY_NOTE =
+  "Summary prepared locally from the call transcript — the server summary did not arrive in time.";
+/** "The agent wrapped the call up": a close after this is a normal end, not a
+ * mid-call connection failure. */
+const FAREWELL_RE = /thank you for reaching out|have a great day/i;
+
 type Action =
   | { type: "state"; state: CallState }
   | { type: "transcript"; role: TranscriptRole; text: string; final: boolean }
@@ -121,9 +136,25 @@ export function useVoiceSession() {
   stateRef.current = data.state;
   const transcriptRef = useRef<TranscriptEntry[]>([]);
   transcriptRef.current = data.transcript;
+  const toolsRef = useRef<ToolEvent[]>([]);
+  toolsRef.current = data.tools;
   const summaryRef = useRef<CallSummary | null>(null);
   summaryRef.current = data.summary;
   const endingSoonRef = useRef(false);
+  // The call has effectively ended: end_call tool seen, farewell spoken, or
+  // the user clicked End Call. A socket close after this must never show
+  // "Connection lost".
+  const endCallSeenRef = useRef(false);
+  const farewellRef = useRef(false);
+  const localEndRef = useRef(false);
+  const endWaitRef = useRef<number | null>(null);
+
+  const clearEndWait = useCallback(() => {
+    if (endWaitRef.current !== null) {
+      window.clearTimeout(endWaitRef.current);
+      endWaitRef.current = null;
+    }
+  }, []);
 
   const sendJson = useCallback((payload: Record<string, unknown>) => {
     const ws = wsRef.current;
@@ -147,21 +178,44 @@ export function useVoiceSession() {
     wsRef.current = null;
   }, []);
 
-  // A warned hosting-limit close: end gracefully with the server summary if
-  // it arrived, otherwise build the client-side fallback from the transcript.
-  const finishAfterClose = useCallback(() => {
+  // The socket closed (or the local summary wait elapsed) after the call had
+  // effectively ended: end with the server summary if we have one, otherwise
+  // build the client-side fallback from the transcript + tool events and add
+  // a small note - never the red "Connection lost" banner.
+  const finishLocally = useCallback(() => {
     const existing = summaryRef.current;
     if (existing) {
       dispatch({ type: "summary", summary: existing });
+      clearEndWait();
+      teardownSocket();
       return;
     }
-    dispatch({ type: "summary", summary: clientFallbackSummary(transcriptRef.current) });
-  }, []);
+    dispatch({
+      type: "summary",
+      summary: clientFallbackSummary(transcriptRef.current, toolsRef.current),
+    });
+    dispatch({ type: "notice", notice: LOCAL_SUMMARY_NOTE });
+    clearEndWait();
+    teardownSocket();
+  }, [clearEndWait, teardownSocket]);
+
+  const callEffectivelyEnded = useCallback(
+    () =>
+      localEndRef.current ||
+      endCallSeenRef.current ||
+      farewellRef.current ||
+      stateRef.current === "ended",
+    [],
+  );
 
   const start = useCallback(async () => {
     dispatch({ type: "reset" });
     teardownSocket();
+    clearEndWait();
     endingSoonRef.current = false;
+    endCallSeenRef.current = false;
+    farewellRef.current = false;
+    localEndRef.current = false;
     // show connecting immediately: badge truth + onclose treats unclean
     // drops during handshake as connection-lost instead of silent idle
     dispatch({ type: "state", state: "connecting" });
@@ -199,6 +253,9 @@ export function useVoiceSession() {
           if (role !== "customer" && role !== "agent") break;
           const text = typeof msg.text === "string" ? msg.text : "";
           if (!text.trim()) break; // blank interim/final — no empty rows
+          if (role === "agent" && msg.final === true && FAREWELL_RE.test(text)) {
+            farewellRef.current = true; // a close after this is a normal end
+          }
           dispatch({ type: "transcript", role, text, final: msg.final === true });
           break;
         }
@@ -211,6 +268,9 @@ export function useVoiceSession() {
           playback.flush();
           break;
         case "tool":
+          if (msg.name === "end_call") {
+            endCallSeenRef.current = true; // agent-initiated end
+          }
           dispatch({
             type: "tool",
             event: {
@@ -234,6 +294,7 @@ export function useVoiceSession() {
           }
           break;
         case "summary":
+          clearEndWait(); // the server summary won the race
           if (msg.summary && typeof msg.summary === "object") {
             dispatch({ type: "summary", summary: msg.summary as CallSummary });
           }
@@ -266,6 +327,9 @@ export function useVoiceSession() {
       if (wsRef.current !== ws) return;
       wsRef.current = null;
       const current = stateRef.current;
+      // Already finished locally (End Call / summary / error): a close here
+      // is expected - the summary wait (if still pending) resolves itself.
+      if (current === "ended" || current === "idle" || current === "error") return;
       if (
         current === "connecting" ||
         current === "listening" ||
@@ -274,19 +338,38 @@ export function useVoiceSession() {
       ) {
         mic.stop();
         playback.flush();
-        if (endingSoonRef.current) {
-          finishAfterClose(); // warned time-limit drop — end, don't error
+        if (endingSoonRef.current || callEffectivelyEnded()) {
+          // Warned time-limit drop OR the call had effectively ended
+          // (end_call tool / farewell / local End Call): end with the
+          // transcript + summary - never "Connection lost".
+          finishLocally();
           return;
         }
         dispatch({ type: "error", error: "Connection lost — please retry." });
       }
     };
-  }, [finishAfterClose, mic, playbackDone, sendAudio, sendJson, teardownSocket]);
+  }, [callEffectivelyEnded, clearEndWait, finishLocally, mic, playbackDone, sendAudio, sendJson, teardownSocket]);
 
   const end = useCallback(() => {
-    sendJson({ type: "end" });
-    playback.flush(); // stop queued audio now; the re-sync playback_done is ignored post-end
-  }, [sendJson]);
+    if (localEndRef.current) return; // idempotent: the first click wins
+    localEndRef.current = true;
+    sendJson({ type: "end" }); // best-effort - never depend on the server
+    mic.stop(); // stop capture instantly, whatever the server is doing
+    playback.flush(); // stop audio instantly (re-sync playback_done is moot)
+    if (stateRef.current !== "ended" && stateRef.current !== "error") {
+      dispatch({ type: "state", state: "ended" }); // instant ended view
+    }
+    if (summaryRef.current) {
+      teardownSocket();
+      return;
+    }
+    // Give the server its full worst-case budget; then fall back locally.
+    clearEndWait();
+    endWaitRef.current = window.setTimeout(() => {
+      endWaitRef.current = null;
+      finishLocally();
+    }, END_SUMMARY_WAIT_MS);
+  }, [clearEndWait, finishLocally, mic, sendJson, teardownSocket]);
 
   const retry = useCallback(async () => {
     playback.flush();
@@ -297,11 +380,12 @@ export function useVoiceSession() {
 
   useEffect(
     () => () => {
+      clearEndWait();
       teardownSocket();
       mic.stop();
       playback.flush();
     },
-    [mic.stop, teardownSocket],
+    [clearEndWait, mic.stop, teardownSocket],
   );
 
   return {

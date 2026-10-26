@@ -59,9 +59,55 @@ def parse_value(value: str) -> int:
     return int(value.replace("₹", "").replace(",", "").strip())
 
 
-def return_eligibility(order: dict) -> dict:
+def damage_report_eligibility(order: dict) -> dict:
+    """48-hour damaged/defective report window, computed from the delivery age.
+
+    This is the replacement guardrail: when a return/refund is being declined,
+    the model may only offer a replacement for damage if this verdict is
+    true — it is computed here (policy decides), never left to the prompt.
+    """
     if order["status"] != "Delivered":
         return {
+            "damage_report_eligible": False,
+            "damage_report_reason": (
+                f"Order status is {order['status']}, not Delivered — the "
+                f"{DAMAGED_REPORT_HOURS}-hour damage-report window starts at delivery."
+            ),
+        }
+    days = order.get("delivered_days_ago")
+    if days is None:
+        return {
+            "damage_report_eligible": False,
+            "damage_report_reason": (
+                "No delivery date is on record, so the damage-report window "
+                f"({DAMAGED_REPORT_HOURS} hours, with photos) cannot be confirmed."
+            ),
+        }
+    if days * 24 > DAMAGED_REPORT_HOURS:
+        return {
+            "damage_report_eligible": False,
+            "damage_report_reason": (
+                f"Delivered {days} days ago; the damage-report window "
+                f"({DAMAGED_REPORT_HOURS} hours, with photos) has also passed "
+                "for this order."
+            ),
+        }
+    return {
+        "damage_report_eligible": True,
+        "damage_report_reason": (
+            f"Delivered {days} days ago, within the {DAMAGED_REPORT_HOURS}-hour "
+            "damage-report window — a replacement requires photos."
+        ),
+    }
+
+
+def return_eligibility(order: dict) -> dict:
+    # Damage verdict rides on every return result: a declined return may only
+    # be followed by a replacement offer when damage_report_eligible is true.
+    damage = damage_report_eligibility(order)
+    if order["status"] != "Delivered":
+        return {
+            **damage,
             "return_eligible": False,
             "return_reason": (
                 f"Order status is {order['status']}, not Delivered — the 7-day return "
@@ -71,11 +117,13 @@ def return_eligibility(order: dict) -> dict:
     days = order.get("delivered_days_ago")
     if days is None:
         return {
+            **damage,
             "return_eligible": False,
             "return_reason": "No delivery date is on record for this order.",
         }
     if days > RETURN_WINDOW_DAYS:
         return {
+            **damage,
             "return_eligible": False,
             "return_reason": (
                 f"Delivered {days} days ago; returns are accepted within "
@@ -83,6 +131,7 @@ def return_eligibility(order: dict) -> dict:
             ),
         }
     return {
+        **damage,
         "return_eligible": True,
         "condition_required": "unopened, unused, original packaging",
         "return_reason": (

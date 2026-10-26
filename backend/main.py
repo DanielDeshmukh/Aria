@@ -17,6 +17,8 @@ if not logging.root.handlers:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Aria Voice Agent", version="0.1.0")
 
 DIST: Path = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -47,10 +49,18 @@ async def ws_call(websocket: WebSocket) -> None:
     try:
         while True:
             await session.handle(await websocket.receive_json())
+            if session.ended:
+                # summary + state:ended are already flushed by _end; close the
+                # socket only AFTER sending them (the endpoint returns, which
+                # closes the connection). Buffered repeat "end" clicks are
+                # deliberately not read again - _end is idempotent.
+                break
     except WebSocketDisconnect:
         pass
     except Exception:
-        pass
+        # Never swallow silently: a swallowed send/close failure was how the
+        # production "stuck LISTENING, no summary" bug hid itself.
+        logger.exception("ws/call handler failed")
     finally:
         await session.close()
 
