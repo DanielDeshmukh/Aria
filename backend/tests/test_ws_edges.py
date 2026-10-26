@@ -171,10 +171,12 @@ def test_still_there_fires_once_then_again_after_customer_speaks(
         await wait_until(
             lambda: llm.chat_calls == 1, what="customer turn consumed"
         )
+        # the re-armed nudge waits SPEECH_FRESH_SECONDS (3 s) of quiet after
+        # the customer's final — that guard is the issue-4 fix
         await wait_until(
             lambda: count(box, STILL_THERE) >= 2,
             what="still-there re-armed after customer speech",
-            timeout=2.0,
+            timeout=4.0,
         )
 
     asyncio.run(scenario())

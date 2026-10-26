@@ -30,7 +30,13 @@ SpeechStartCb = Callable[[], Awaitable[None]]
 DEEPGRAM_WS_URL = (
     "wss://api.deepgram.com/v1/listen"
     "?model=nova-3&language={language}&encoding=linear16&sample_rate={sample_rate}"
-    "&interim_results=true&endpointing=300&smart_format=true"
+    # endpointing=800 (was 300): 300 ms cut utterances mid-sentence ("Can you
+    # cancel my" finalized before "order ORD-103"), which starved the session
+    # of interim updates and let the idle nudge fire right after the final.
+    # 800 ms waits out natural clause pauses; measured cost is ~+0.5 s to
+    # finalization (first-audio latency is unchanged — it is greeting/turn
+    # synthesis, not endpointing).
+    "&interim_results=true&endpointing=800&smart_format=true"
     "&keyterm=ORD&keyterm=ORD-101&keyterm=ORD-102&keyterm=ORD-103"
 )
 

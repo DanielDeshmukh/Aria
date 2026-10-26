@@ -67,40 +67,66 @@ class FakeTTS:
 
 
 class FakeLLM:
-    """Scripted rounds, replayed on every chat() call.
+    """Scripted rounds.
 
     Round tuples:
       ("tool", name, args)  -> yields a tool event (executes via execute_tool)
       ("text", sentence)    -> yields one text delta
       ("hang",)             -> sleeps until cancelled (sets self.cancelled)
       ("error", message)    -> raises RuntimeError(message)
+
+    Default: all rounds replayed on EVERY chat() call (single-turn tests).
+    advance=True: rounds are consumed across chat() calls, and a call ends
+    after the first "text" round (a model turn ends when the model speaks) —
+    so [text][tool+text] scripts a read-back turn followed by a confirmed
+    tool turn (issue-3 test).
     """
 
-    def __init__(self, rounds: list[tuple] | None = None, summary: dict | str | Exception | None = None) -> None:
+    def __init__(
+        self,
+        rounds: list[tuple] | None = None,
+        summary: dict | str | Exception | None = None,
+        advance: bool = False,
+    ) -> None:
         self.rounds = list(rounds or [])
         self.summary = summary if summary is not None else DEFAULT_SUMMARY
+        self.advance = advance
+        self._cursor = 0
         self.chat_calls = 0
         self.complete_calls = 0
         self.cancelled = False
 
     async def chat(self, messages, tools, execute_tool):
         self.chat_calls += 1
-        for r in self.rounds:
-            kind = r[0]
-            if kind == "tool":
-                name, args = r[1], r[2]
-                result = execute_tool(name, args)
-                yield {"type": "tool", "name": name, "args": args, "result": result}
-            elif kind == "text":
-                yield {"type": "text", "delta": r[1]}
-            elif kind == "hang":
-                try:
-                    await asyncio.sleep(3600)
-                except asyncio.CancelledError:
-                    self.cancelled = True
-                    raise
-            elif kind == "error":
-                raise RuntimeError(str(r[1]) if len(r) > 1 else "provider down")
+        if not self.advance:
+            for r in self.rounds:
+                async for event in self._run_round(r, execute_tool):
+                    yield event
+            return
+        while self._cursor < len(self.rounds):
+            r = self.rounds[self._cursor]
+            self._cursor += 1
+            async for event in self._run_round(r, execute_tool):
+                yield event
+            if r[0] == "text":
+                return
+
+    async def _run_round(self, r: tuple, execute_tool):
+        kind = r[0]
+        if kind == "tool":
+            name, args = r[1], r[2]
+            result = execute_tool(name, args)
+            yield {"type": "tool", "name": name, "args": args, "result": result}
+        elif kind == "text":
+            yield {"type": "text", "delta": r[1]}
+        elif kind == "hang":
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+        elif kind == "error":
+            raise RuntimeError(str(r[1]) if len(r) > 1 else "provider down")
 
     async def complete(self, messages) -> str:
         self.complete_calls += 1

@@ -10,11 +10,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import re
 import time
 from typing import Any, Awaitable, Callable
 
 from . import tools as tools_mod
-from .normalize import has_foreign_script
+from .normalize import has_foreign_script, normalize_order_id
 from .prompts import SYSTEM_PROMPT
 from .splitter import split_sentences
 from .summary import build_summary, fallback_summary
@@ -27,10 +28,29 @@ STILL_THERE = "Are you still there? I'm happy to help if you need anything."
 SILENCE_SECONDS = 9.0
 # The nudge must never fire while the customer is talking: interims restart
 # the 9 s countdown, and a fire additionally requires this much quiet since
-# the last speech signal (interim or SpeechStarted).
-SPEECH_FRESH_SECONDS = 2.0
+# the last speech signal (non-empty interim, non-empty final, or
+# SpeechStarted). 3 s keeps "Are you still there?" at least a few seconds
+# after the last transcript fragment (mid-sentence finals included).
+SPEECH_FRESH_SECONDS = 3.0
 LOW_CONFIDENCE = 0.55
 INTERIM_MIN_INTERVAL = 0.2
+# Low-confidence finals are normally discarded, except two safe shapes:
+# digit-like order ids (STT confidence on a bare "101" often lands below the
+# gate) and short yes/no answers when Aria's last question was a yes/no
+# confirmation (the read-back "yes" is frequently a soft murmur).
+SHORT_YES_NO = frozenset(
+    {
+        "yes", "yeah", "yep", "yup", "ya", "sure", "ok", "okay", "correct",
+        "right", "haan", "haa", "ha", "ji", "nahi", "na", "no", "nope",
+        "nah", "please do", "please", "go ahead", "do it", "cancel it",
+        "yes please", "no thanks", "of course", "absolutely", "definitely",
+    }
+)
+_YES_NO_Q_START = re.compile(
+    r"^(do you|would you|shall i|should i|can i|are you|is that|can we|"
+    r"have you|did you)\b",
+    re.I,
+)
 # Vercel Functions (Hobby) kill WebSockets at maxDuration = 300 s: warn the
 # client at 270 s, finish gracefully (summary + ended) at 295 s.
 CALL_ENDING_SOON_SECONDS = 270.0
@@ -60,6 +80,7 @@ class CallSession:
         self._tool_lookup_ms: float | None = None
         self._last_interim_at = 0.0
         self._last_user_speech_at = 0.0
+        self._last_agent_question = ""
         self._still_there_sent = False
         self._warn_handle: asyncio.TimerHandle | None = None
         self._end_handle: asyncio.TimerHandle | None = None
@@ -168,21 +189,61 @@ class CallSession:
         text = (text or "").strip()
         if not text:
             return
+        # A non-empty final is the last transcript fragment of an utterance
+        # (endpointing can cut mid-sentence): count it as fresh speech so the
+        # nudge cannot fire a moment after the finalisation. Empty finals are
+        # ignored on purpose — Deepgram emits them throughout pure silence
+        # (test_still_there_fires_despite_empty_finals).
+        self._last_user_speech_at = time.monotonic()
         self._cancel_silence()
         self._still_there_sent = False
         self.transcript.append({"role": "customer", "text": text})
         await self.send(
             {"type": "transcript", "role": "customer", "text": text, "final": True}
         )
-        if (confidence is not None and confidence < LOW_CONFIDENCE) or has_foreign_script(
-            text
-        ):
-            # Unclear audio, or a final in a script outside Latin/Devanagari
-            # (the language=multi Telugu mis-detection): never act on it —
-            # same canned path as low confidence, no LLM turn.
+        if has_foreign_script(text):
+            # A final in a script outside Latin/Devanagari (the language=multi
+            # Telugu mis-detection): never act on it — same canned path as
+            # low confidence, no LLM turn.
+            await self._canned_speak(REPEAT)
+            return
+        if not self._final_acceptable(text, confidence):
+            # Unclear audio: never act on it, canned repeat instead.
             await self._canned_speak(REPEAT)
             return
         await self._start_turn(user_text=text)
+
+    def _final_acceptable(self, text: str, confidence: float | None) -> bool:
+        """Gate for finals at LOW_CONFIDENCE: normally reject, but accept a
+        digit-like order id (tools normalize it again) or a short yes/no
+        answer when Aria's last question was a yes/no confirmation."""
+        if confidence is None or confidence >= LOW_CONFIDENCE:
+            return True
+        if normalize_order_id(text) is not None:
+            return True
+        if self._is_yes_no_answer(text) and self._is_yes_no_question(
+            self._last_agent_question
+        ):
+            return True
+        return False
+
+    @staticmethod
+    def _is_yes_no_answer(text: str) -> bool:
+        cleaned = text.strip().strip(".!?,;:\"'").lower()
+        return cleaned in SHORT_YES_NO
+
+    @staticmethod
+    def _is_yes_no_question(question: str) -> bool:
+        """True for Aria's confirmation questions (the cancel read-back among
+        them); the greeting ("How can I help you today?") is not one."""
+        question = question.strip()
+        if not question.endswith("?"):
+            return False
+        return bool(
+            _YES_NO_Q_START.match(question)
+            or re.search(r"\bcancel\b", question, re.I)
+            or re.search(r"\bstill there\b", question, re.I)
+        )
 
     async def _on_speech_start(self) -> None:
         if self._closing or self._ended or not self._started:
@@ -247,6 +308,9 @@ class CallSession:
     async def _start_turn(self, user_text: str | None = None) -> None:
         self._cancel_silence()
         await self._cancel_turn()
+        # the gate already consumed it; a stale question must not legitimise
+        # the next low-confidence murmur
+        self._last_agent_question = ""
         if user_text is not None:
             self.messages.append({"role": "user", "content": user_text})
         self._turn_task = asyncio.create_task(self._run_turn())
@@ -308,6 +372,11 @@ class CallSession:
     async def _speak(self, text: str) -> None:
         if self._closing or self._ended:
             return
+        if text.rstrip().endswith("?"):
+            # remembered for the low-confidence yes/no gate (issue 3): a short
+            # "yes"/"no" after a confirmation question is accepted below
+            # LOW_CONFIDENCE
+            self._last_agent_question = text
         self.transcript.append({"role": "agent", "text": text})
         await self.send(
             {"type": "transcript", "role": "agent", "text": text, "final": True}

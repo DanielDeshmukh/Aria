@@ -149,3 +149,18 @@ def test_cancel_order_no_readable_id() -> None:
     assert result["error"] == "NO_ORDER_ID"
     assert result["needs_id"] is True
     assert "ask the customer" in result["message"].lower()
+
+
+def test_cancel_order_confirmed_false_probes_eligibility() -> None:
+    """Issue 2: confirmed=false is the eligibility probe — an ineligible order
+    comes back INELIGIBLE with the policy reason (never NOT_CONFIRMED), so the
+    model can deny before ever asking the customer to confirm."""
+    for oid, status in (("ORD-101", "Out for Delivery"), ("ORD-102", "Delivered")):
+        result = tools.dispatch("cancel_order", {"order_id": oid, "confirmed": False})
+        assert result["cancelled"] is False
+        assert result["error"] == "INELIGIBLE"
+        assert result["cancellable"] is False
+        assert result["reason"]
+        assert result["order"]["status"] == status
+    result = tools.dispatch("cancel_order", {"order_id": "ORD-103", "confirmed": False})
+    assert result["error"] == "NOT_CONFIRMED"

@@ -26,8 +26,8 @@ https://danieldeshmukh.github.io/aria-demo-link/ — headphones recommended.)
 
 **LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
 
-**Current status (2026-10-25):** all four assignment phases are shipped —
-156 tests green locally (149 pass + 7 provider-key tests skip in CI, which
+**Current status (2026-10-26):** all four assignment phases are shipped —
+169 tests green locally (158 pass + 11 provider-key tests skip in CI, which
 has no secrets), the 14-scenario runbook passes 14/14 on the production
 path (and 14/14 on the earlier public tunnel URL), and the site nav lists
 every section at clean paths (`/call`, `/pipeline` — no hash URLs anywhere).
@@ -149,7 +149,7 @@ The "database" is a single JSON file of mock orders — `backend/data/orders.jso
 * **Cost:** lookup + policy verdict is measured per turn as `tool_lookup_ms`
   in the `stats` event — typical **0.01 ms** (p50, n=2000; p95 0.02 ms,
   max 0.17 ms; a live call reports ~0.1 ms). Against STT endpointing
-  (300 ms), the LLM tool loop (0.7–2 s) and TTS first frame (0.4–0.6 s) the
+  (800 ms), the LLM tool loop (0.7–2 s) and TTS first frame (0.4–0.6 s) the
   data layer is effectively free (<0.01% of the turn budget).
 * **Panel mirror:** the call screen's Test orders panel renders
   `frontend/src/data/orders.ts`; `backend/tests/test_frontend_orders_sync.py`
@@ -202,7 +202,7 @@ Aria/
 │   ├── data/orders.json     #   ORD-101..103 fixtures
 │   ├── scripts/             #   probe_sarvam, text_harness, ws_smoke
 │   │                        #   (remote WS greeting+summary probe)
-│   └── tests/               #   156 tests (hermetic + live smoke tests)
+│   └── tests/               #   169 tests (hermetic + live smoke tests)
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React product site (Vite + Tailwind)
 │   ├── src/
@@ -298,7 +298,7 @@ npx tsc --noEmit        # typecheck
 npm run build           # production build (dist/ must exist)
 cd ..
 pip install -r requirements-dev.txt
-python -m pytest -v     # full suite: 156 tests (see table below)
+python -m pytest -v     # full suite: 169 tests (see table below)
 ```
 
 Run the suite any time from the repo root (SPA tests auto-skip if
@@ -331,7 +331,7 @@ Test suite layout:
 | `test_audio_utils` / `test_stt_parse` | resample/base64, Deepgram frame parsing |
 | `test_vercel_adapt` | Vercel config (`fluid`, region, 300 s, build), `.vercelignore`, `ws-selftest` route, 270 s/295 s call-deadline timers (set only when `VERCEL` is set) |
 | `test_return_condition` / `test_discount_rule` | opened-product return rule in code + prompt, no-discount rule in `POLICY_TEXT`/prompt/tool enum |
-| `test_llm_live` / `test_stt_live` / `test_tts_live` / `test_live_voice` | real Groq/Deepgram/Sarvam smoke tests — **live voice E2E: TTS audio → STT → tool turn → summary** — all skip automatically when `.env` keys are absent (CI has none) |
+| `test_llm_live` / `test_stt_live` / `test_tts_live` / `test_live_voice` / `test_live_cancel` / `test_stt_hinglish_live` | real Groq/Deepgram/Sarvam smoke tests — **live voice E2E: TTS audio → STT → tool turn → summary**, live cancel/eligibility and Hinglish-transcription probes — all skip automatically when `.env` keys are absent (CI has none) |
 
 ## 8. HTTP & WebSocket API
 
@@ -375,10 +375,15 @@ Server → client frames:
 Guardrails inside the session: a customer interim during playback or
 thinking triggers barge-in (Deepgram omits `SpeechStarted` on our config, so
 an interim is the reliable interrupt signal), 9 s of silence asks "still
-there?" once until the customer speaks again, low-confidence finals answer
-with a canned repeat line, and the session is one-shot (one call per
-connection). When the client goes quiet, the server feeds Deepgram its own
-100 ms silence frames so endpointing still finalizes the utterance. On
+there?" once until the customer speaks again — and never within 3 s of the
+last final, since endpointing can cut a sentence mid-way and the cut
+fragment must not be mistaken for an answer —, low-confidence finals answer
+with a canned repeat line (except a clean order id such as "101" or a short
+yes/no answering Aria's last question, which are taken at face value), and
+the session is one-shot (one call per connection). When the client goes
+quiet, the server feeds Deepgram its own 100 ms silence frames so
+endpointing (800 ms — less eager than the original 300 ms, which finalized
+mid-sentence) still finalizes the utterance. On
 Vercel (where `VERCEL` is set) the server also schedules a 270 s warning +
 295 s graceful close so the call ends with a summary before the platform's
 300 s function limit; locally these timers are not armed.
@@ -550,7 +555,13 @@ policy-true refusal as any other phrasing.
   feeds the prompt, and `get_policy_info` answers the `discounts` topic
   from code.
 * **Cancellation:** allowed only while `Processing` — ORD-101 (Out for
-  Delivery) refused, ORD-103 eligible.
+  Delivery) refused, ORD-103 eligible. Eligibility is checked *before* any
+  confirmation is asked: an ineligible id gets the refusal plus the reason
+  (no pointless "are you sure?"), an eligible one reads the order back and
+  asks whether the customer wants it cancelled — only an explicit yes runs
+  `cancel_order(confirmed=true)`.
+* **Language:** replies follow the customer's latest message — English in,
+  English out (Hinglish stays Hinglish), locked by a system-prompt rule.
 * **COD:** unavailable above **₹2,500**; **shipping is free above ₹499**,
   so ORD-102 at exactly **₹499** is the deliberate boundary case — the agent
   says plainly that the plan's wording is ambiguous rather than guessing.

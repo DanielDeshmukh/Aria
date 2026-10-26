@@ -32,7 +32,7 @@ export const PIPELINE = [
   {
     n: "02",
     title: "Listen",
-    desc: "Deepgram nova-3 streams speech-to-text with the language set in one config value (a final in any other script is caught and asked to repeat), endpointing at 300 ms, and every interim doubles as a barge-in signal while Aria is speaking.",
+    desc: "Deepgram nova-3 streams speech-to-text with the language set in one config value (a final in any other script is caught and asked to repeat), endpointing at 800 ms, and every interim doubles as a barge-in signal while Aria is speaking.",
   },
   {
     n: "03",

@@ -58,6 +58,10 @@ def test_hinglish_line_transcribes_under_pinned_language() -> None:
             for offset in range(0, len(pcm), FRAME_BYTES):
                 frame = pcm[offset : offset + FRAME_BYTES]
                 await stt.send_audio(pcm16_to_b64(frame))
+                # real-time mic cadence (like the keepalive): burst-fed speech
+                # backlogs Deepgram — measured 2/4 no-final failures at
+                # endpointing=800 when the frames were sent as fast as possible
+                await asyncio.sleep(0.1)
             # Deepgram finalizes on the silent gap; the keepalive keeps the
             # cadence real-time after the speech frames stop.
             deadline = time.monotonic() + 8.0

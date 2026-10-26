@@ -106,7 +106,8 @@ def test_live_voice_tool_turn_and_summary() -> None:
                 what="listening state",
             )
 
-            # ---- TTS-generated utterance -> STT (100 ms frames)
+            # ---- TTS-generated utterance -> STT (100 ms frames, real-time
+            # cadence: burst-fed speech backlogs Deepgram past endpointing)
             pcm = await tts.synth(UTTERANCE)
             assert len(pcm) > 8000
             pcm = resample_pcm16(pcm, TTS_RATE, STT_RATE)
@@ -118,10 +119,11 @@ def test_live_voice_tool_turn_and_summary() -> None:
                         "data": base64.b64encode(frame).decode("ascii"),
                     }
                 )
-            # trailing silence: Deepgram (endpointing=300 ms) finalizes the
+                await asyncio.sleep(0.1)
+            # trailing silence: Deepgram (endpointing=800 ms) finalizes the
             # utterance only when it sees silence in the stream.
             silence = base64.b64encode(b"\x00" * FRAME_BYTES).decode("ascii")
-            for _ in range(10):  # 1 s of silence
+            for _ in range(15):  # 1.5 s of silence (> endpointing window)
                 await session.handle({"type": "audio", "data": silence})
 
             # ---- tool turn

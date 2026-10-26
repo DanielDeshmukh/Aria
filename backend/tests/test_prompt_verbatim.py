@@ -29,6 +29,18 @@ def test_hinglish_enabled() -> None:
     assert "Hinglish" in SYSTEM_PROMPT
 
 
+def test_english_default_language_rule() -> None:
+    """Live repro: an English customer got a Hinglish reply. English is the
+    default and sticky — only the customer's latest message switches it."""
+    for needle in (
+        "reply in English by default",
+        "LATEST message",
+        "Never answer an English message in Hindi or Hinglish",
+        "the moment they write English, you reply in English again",
+    ):
+        assert needle in SYSTEM_PROMPT, f"missing language rule: {needle!r}"
+
+
 def test_shipping_499_boundary_instruction() -> None:
     assert "exactly ₹499" in SYSTEM_PROMPT
     assert "cannot confirm" in SYSTEM_PROMPT
@@ -54,13 +66,18 @@ def test_tools_documented() -> None:
 
 
 def test_cancellation_confirmation_flow() -> None:
-    """Fix 3: read back -> explicit yes -> cancel_order(confirmed=true), and
-    the agent never claims a cancellation the tool did not return."""
+    """Fix 3 + issue 2: eligibility is checked FIRST, ineligible orders are
+    denied without any confirmation question, and only a Processing order
+    goes read back -> explicit yes -> cancel_order(confirmed=true). The agent
+    never claims a cancellation the tool did not return."""
     for needle in (
-        "REQUIRED SEQUENCE: read back the order id and the product",
+        "check eligibility FIRST",
+        "do NOT ask any confirmation question",
+        "never ask for confirmation on an order that cannot be cancelled",
+        "ask whether they want it cancelled",
         "wait for an explicit yes",
         "confirmed=true",
-        "confirmed=false only previews eligibility",
+        "confirmed=false never cancels",
         "NEVER say an order is cancelled unless cancel_order returned cancelled=true",
         "NOT_CONFIRMED",
     ):

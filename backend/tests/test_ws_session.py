@@ -457,3 +457,118 @@ def test_cancel_order_tool_turn_confirmed() -> None:
         )
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "said,tool_id",
+    [
+        ("101", "101"),
+        ("one zero one", "one zero one"),
+        ("ORD 101", "ORD 101"),
+    ],
+)
+def test_low_confidence_order_id_accepted(said: str, tool_id: str) -> None:
+    """Issue 3: digit-like ids often land below LOW_CONFIDENCE ("101" got a
+    canned repeat live) — the gate opens on them and the tool normalizes the
+    spoken form again."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                rounds=[
+                    ("tool", "get_order_details", {"order_id": tool_id}),
+                    ("text", "Your order ORD-101 is out for delivery."),
+                ]
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final(said, 0.3)
+        await wait_until(lambda: box.of("tool"), what="tool after low-conf id")
+        assert box.of("tool")[0]["result"]["found"] is True
+        assert not any(m.get("text") == REPEAT for m in box.of("transcript"))
+        assert llm.chat_calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_low_confidence_yes_after_readback_accepted() -> None:
+    """Issue 3 extension: the read-back "yes" is often a soft murmur below
+    LOW_CONFIDENCE — accepted only because Aria's last question was a yes/no
+    confirmation (the cancel read-back)."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                advance=True,
+                rounds=[
+                    (
+                        "text",
+                        "ORD-103 is Processing — would you like me to cancel it?",
+                    ),
+                    ("tool", "cancel_order", {"order_id": "ORD-103", "confirmed": True}),
+                    ("text", "Done — ORD-103 is cancelled."),
+                ],
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("cancel my order ORD-103")
+        await wait_until(
+            lambda: any(
+                "cancel it?" in m.get("text", "")
+                for m in box.of("transcript")
+                if m["role"] == "agent"
+            ),
+            what="read-back question",
+        )
+        await stt.emit_final("yes", 0.3)
+        await wait_until(lambda: box.of("tool"), what="confirmed cancel")
+        tool = box.of("tool")[0]
+        assert tool["args"] == {"order_id": "ORD-103", "confirmed": True}
+        assert tool["result"]["cancelled"] is True
+        assert not any(m.get("text") == REPEAT for m in box.of("transcript"))
+        assert llm.chat_calls == 2
+
+    asyncio.run(scenario())
+
+
+def test_low_confidence_orphan_yes_still_repeats() -> None:
+    """The gate stays shut without a yes/no question behind it: a stray
+    low-confidence "yes" (e.g. right after the greeting) never reaches the LLM."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("yes", 0.3)
+        await wait_until(
+            lambda: any(m.get("text") == REPEAT for m in box.of("transcript")),
+            what="canned repeat for orphan yes",
+        )
+        assert llm.chat_calls == 0
+
+    asyncio.run(scenario())
+
+
+def test_nudge_never_fires_within_fresh_window_after_final(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issue 4: endpointing can cut a final mid-sentence — the nudge must stay
+    at least SPEECH_FRESH_SECONDS after the last non-empty transcript fragment,
+    even when the silence window is tiny. Empty finals are different (they are
+    the silence chatter and must not reset — see the empty-finals test above)."""
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.3)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make()
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("can you cancel my")  # mid-sentence final
+        await asyncio.sleep(2.4)
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "nudge fired within the fresh-speech window of the last final"
+        await wait_until(
+            lambda: any(m.get("text") == STILL_THERE for m in box.of("transcript")),
+            what="nudge after the fresh window",
+            timeout=2.5,
+        )
+
+    asyncio.run(scenario())

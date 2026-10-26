@@ -328,7 +328,7 @@ export const NORMALIZATION = {
 /* ---------------- 7 · call behaviour ---------------- */
 
 export const LATENCY = [
-  { label: "STT endpointing", ms: "300–500 ms", w: 33, cls: "bg-pine" },
+  { label: "STT endpointing", ms: "800 ms", w: 45, cls: "bg-pine" },
   { label: "LLM first token", ms: "200–400 ms", w: 27, cls: "bg-pop" },
   { label: "TTS first audio", ms: "< 250 ms", w: 20, cls: "bg-warmup" },
 ];

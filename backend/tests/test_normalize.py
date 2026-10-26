@@ -22,6 +22,10 @@ CASES = {
     "Cancel ORD-one hundred three": "ORD-103",
     "ORD1O1": "ORD-101",  # Deepgram smart_format final: letter O between digits
     "Where is my order, ORD1O1": "ORD-101",
+    # issue 3: the low-confidence gate opens on normalize()d ids — these
+    # exact low-confidence utterances must map ("101" got a canned repeat live)
+    "101": "ORD-101",
+    "ORD 101": "ORD-101",
 }
 
 

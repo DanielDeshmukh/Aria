@@ -70,6 +70,9 @@ async def feed_utterance(session: CallSession, pcm: bytes) -> None:
                 ),
             }
         )
+        # real-time mic cadence: burst-fed speech backlogs Deepgram past the
+        # endpointing window (stt.py docstring: near-real-time cadence only)
+        await asyncio.sleep(0.1)
     silence = base64.b64encode(b"\x00" * FRAME_BYTES).decode("ascii")
     for _ in range(12):  # 1.2 s trailing silence -> endpointing finalizes
         await session.handle({"type": "audio", "data": silence})

@@ -45,6 +45,15 @@ def test_stt_language_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "language=en-IN" in url
 
 
+def test_endpointing_not_eager() -> None:
+    """Issue 4: endpointing=300 finalized utterances mid-sentence ("Can you
+    cancel my"), starving the session of interims; 800 ms waits out natural
+    clause pauses (~+0.5 s to finalization, first-audio latency unchanged)."""
+    url = DEEPGRAM_WS_URL.format(sample_rate=16000, language="multi")
+    assert "endpointing=800" in url
+    assert "endpointing=300" not in url
+
+
 def test_selftest_shares_the_single_language_value() -> None:
     # no second hardcoded language anywhere: the probe formats the same knob
     assert "language={language}" in selftest_mod.DEEPGRAM_WS_URL
