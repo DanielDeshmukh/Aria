@@ -27,7 +27,8 @@ https://danieldeshmukh.github.io/aria-demo-link/ — headphones recommended.)
 **LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
 
 **Current status (2026-10-25):** all four assignment phases are shipped —
-134 tests green in CI, the 14-scenario runbook passes 14/14 on the production
+156 tests green locally (149 pass + 7 provider-key tests skip in CI, which
+has no secrets), the 14-scenario runbook passes 14/14 on the production
 path (and 14/14 on the earlier public tunnel URL), and the site nav lists
 every section at clean paths (`/call`, `/pipeline` — no hash URLs anywhere).
 The code is Vercel-ready (multi-service `vercel.json`: FastAPI + Vite, Fluid
@@ -201,7 +202,7 @@ Aria/
 │   ├── data/orders.json     #   ORD-101..103 fixtures
 │   ├── scripts/             #   probe_sarvam, text_harness, ws_smoke
 │   │                        #   (remote WS greeting+summary probe)
-│   └── tests/               #   134 tests (hermetic + live smoke tests)
+│   └── tests/               #   156 tests (hermetic + live smoke tests)
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React product site (Vite + Tailwind)
 │   ├── src/
@@ -297,7 +298,7 @@ npx tsc --noEmit        # typecheck
 npm run build           # production build (dist/ must exist)
 cd ..
 pip install -r requirements-dev.txt
-python -m pytest -v     # full suite: 134 tests (see table below)
+python -m pytest -v     # full suite: 156 tests (see table below)
 ```
 
 Run the suite any time from the repo root (SPA tests auto-skip if
@@ -517,7 +518,7 @@ network checks while the production deploy is in progress.
 | Start Call shows "Microphone access was denied" | the browser blocked the mic | press Retry to re-prompt, or allow microphone access for this site in the browser's site settings |
 | `"Connection lost — please retry."` | WebSocket dropped (server restart, proxy timeout, network) | press Retry — sessions are one-shot, so it opens a fresh connection and session |
 | Call ends by itself at ~5 minutes on Vercel | Hobby `maxDuration` (300 s) force-closes the function | expected — the call_ending_soon notice appears first and the summary is sent before the close; local runs have no limit |
-| Reply arrives in another script/language | `language=multi` occasionally mis-detects a short line | cosmetic — the LLM reads the text correctly; repeat the line |
+| Reply arrives in another script/language | `language=multi` mis-detected a short line (e.g. Telugu for "thank you") | the language is one config value (`STT_LANGUAGE`, default `multi` — en-IN was measured dropping Hinglish entirely) and a foreign-script final is auto-caught: Aria asks you to repeat instead of acting on it |
 | An order id comes back "not found" although you said it | STT mangled the digits beyond repair | the agent asks for the id again (never invents one) — say it slowly, e.g. "ORD-101" or "ord one zero one" |
 
 ## 14. Assignment documents
@@ -571,7 +572,7 @@ The assignment's §8 script, executed against the production path
 | 1 | "Where is my order ORD-101?" | tool call + out for delivery, expected by 6 PM | pass |
 | 2 | "Can I cancel ORD-101?" | refused — already shipped; keep the delivery | pass |
 | 3 | "I got ORD-102 two weeks ago, opened it, can I return it?" | polite no — 7-day window passed | pass |
-| 4 | "Cancel ORD-103" | eligible — order is Processing | pass |
+| 4 | "Please cancel my order ORD-103" then "yes" (two turns; a bare "Cancel ORD-103" can mis-decode under `language=multi` and gets the guarded repeat) | turn 1: `get_order_details` + "Do you want me to cancel it?"; turn 2: `cancel_order(confirmed=true)` succeeds, then the cancellation is confirmed | pass |
 | 5 | "Where's ORD-999?" | exact unknown-order phrase | pass |
 | 6 | "Is COD available for a ₹3,000 order?" | no — COD limit is ₹2,500 | pass |
 | 7 | "Book me a flight to Goa" | redirect to Aura Skincare | pass |
@@ -596,8 +597,14 @@ remains the final pre-submit check.
   re-prompts if it was blocked).
 * **Sample orders** are printed on the call screen — speak an id like
   *ORD-101* (or the word form "ord one zero one" — both normalize).
+* **Cancellation phrasing:** say a full sentence — "Please cancel my order
+  ORD-103" then "yes" when she asks. A bare "Cancel ORD-103" can be
+  mis-decoded under `language=multi` (the script guard catches it and Aria
+  asks you to repeat); the fuller phrasing transcribes cleanly.
 * **Hinglish works:** "Mera order kahan hai?" is transcribed with
-  `language=multi` and answered in Hinglish.
+  `language=multi` (en-IN was measured dropping that line with zero
+  finals) and answered in Hinglish; a final that comes back in any other
+  script is guarded — Aria asks you to repeat instead of acting on it.
 * **First load:** production runs on Vercel's serverless edge — if the page or
   the call takes a few seconds on the very first open, reload once (cold
   start); subsequent loads are warm.

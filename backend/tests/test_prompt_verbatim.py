@@ -49,8 +49,22 @@ def test_guardrails_present() -> None:
 
 
 def test_tools_documented() -> None:
-    for name in ("get_order_details", "get_policy_info", "end_call"):
+    for name in ("get_order_details", "cancel_order", "get_policy_info", "end_call"):
         assert name in SYSTEM_PROMPT
+
+
+def test_cancellation_confirmation_flow() -> None:
+    """Fix 3: read back -> explicit yes -> cancel_order(confirmed=true), and
+    the agent never claims a cancellation the tool did not return."""
+    for needle in (
+        "REQUIRED SEQUENCE: read back the order id and the product",
+        "wait for an explicit yes",
+        "confirmed=true",
+        "confirmed=false only previews eligibility",
+        "NEVER say an order is cancelled unless cancel_order returned cancelled=true",
+        "NOT_CONFIRMED",
+    ):
+        assert needle in SYSTEM_PROMPT, f"missing confirmation gate: {needle!r}"
 
 
 def test_order_id_discipline_after_runbook() -> None:
