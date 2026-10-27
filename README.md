@@ -21,6 +21,8 @@ helper, live transcript and post-call summary panels all shipped.
 microphone, press Start Call, and speak (production — see
 [§12](#12-public-demo-link-deploy); headphones recommended.)
 
+**Video demo:** https://youtu.be/lqZzE7Xlk8Q
+
 <!-- demo -->
 
 **LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
