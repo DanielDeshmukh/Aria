@@ -21,9 +21,7 @@ helper, live transcript and post-call summary panels all shipped.
 microphone, press Start Call, and speak (production — see
 [§12](#12-public-demo-link-deploy); headphones recommended.)
 
-**Video demo:** https://youtu.be/lqZzE7Xlk8Q
-
-<!-- demo -->
+**Demo video (~5.5 min):** https://youtu.be/lqZzE7Xlk8Q
 
 **LinkedIn:** https://www.linkedin.com/in/daniel-deshmukh-7b08602b2
 
@@ -50,18 +48,19 @@ microphone, press Start Call, and speak (production — see
 19. [Known limitations](#19-known-limitations)
 20. [Latency](#20-latency)
 
-**Current status (2026-10-26):** all four assignment phases are shipped —
-237 tests in the suite (219 pass offline; in CI without secrets 225 pass + 12
-provider-key tests skip; frontend vitest: 7 tests in 2 files), the
-14-scenario runbook recorded 14/14 on the local production path (`build` +
-`uvicorn :8000`, live provider keys), and the site nav lists every section
-at clean paths (`/call`, `/pipeline` — no hash URLs anywhere). The app is
-deployed on Vercel (multi-service `vercel.json`: FastAPI + Vite, Fluid
-WebSockets, region `bom1`) and checked on the live URL via the health
-endpoint and manual calls ([§12](#12-public-demo-link-deploy)). Before
-submission remaining: the demo video (placeholder above), the §16 runbook
-replay against the production URL, a final pre-submit check from a second
-device, and the submission email.
+**Current status (2026-10-27):** all four assignment phases are shipped —
+250 tests in the suite (232 pass offline, 18 deselected; frontend vitest:
+7 tests in 2 files), the 14-scenario runbook recorded 14/14 on the local
+production path (`build` + `uvicorn :8000`, live provider keys), and the
+site nav lists every section at clean paths (`/call`, `/pipeline` — no hash
+URLs anywhere). The app is deployed on Vercel (multi-service `vercel.json`:
+FastAPI + Vite, Fluid WebSockets, region `bom1`) and was checked on the
+live URL with the health endpoint and manual calls — order lookup, return
+denial, cancellation with confirmation, out-of-scope request, unknown
+order, End Call, goodbye ([§12](#12-public-demo-link-deploy)); the 14
+scenarios are replayed offline through the scripted harness and the unit
+tests. Not yet tested on a second device. Before submission remaining: the
+submission email.
 
 > **Testing policy:** no code or command block reaches this repository before
 > it has been executed. Every snippet below was run on Windows 11
@@ -79,7 +78,8 @@ device, and the submission email.
 > instead of hidden inside a speech-to-speech API. Brand policy is computed in
 > code (`policy.py` + the mock order database) and only paraphrased by the
 > model, so the agent can phrase a decision but never make one. Verification is
-> offline-first: a 237-test hermetic suite (219 pass without provider keys), a
+> offline-first: a 250-test hermetic suite (232 pass offline, 18 live tests
+> deselected), a
 > text-mode scenario harness, key-gated live E2E tests and manual calls on the
 > deployed URL — see [§7](#7-testing--ci) and [§16](#16-test-scenarios-14).
 
@@ -103,7 +103,7 @@ redirected.
 | — | Vercel adaptation: Fluid WebSockets, `main.py` entrypoint, 5-minute call deadline, outbound selftest | shipped (`vercel.json` committed) |
 | — | Public demo on Vercel (`app` + `frontend` services, region `bom1`) | deployed + verified — [§12](#12-public-demo-link-deploy) |
 | — | Site nav: sections at clean paths (`/call`, `/pipeline`, no `#`) | shipped |
-| — | Submission artifacts: demo video, pre-submit check, submission email | pending |
+| — | Submission artifacts: demo video, pre-submit check, submission email | Demo video done; submission email pending |
 
 ## 2. Architecture
 
@@ -221,7 +221,7 @@ Aria/
 │   ├── data/orders.json     #   ORD-101..103 fixtures
 │   ├── scripts/             #   probe_sarvam, text_harness, ws_smoke
 │   │                        #   (remote WS greeting+summary probe)
-│   └── tests/               #   237 tests (hermetic + live smoke tests)
+│   └── tests/               #   250 tests (hermetic + live smoke tests)
 │                            #   (live ones skip without .env keys)
 ├── frontend/                # React product site (Vite + Tailwind)
 │   ├── src/
@@ -298,8 +298,8 @@ curl -I http://localhost:8000/pipeline   # HTTP/1.1 200 OK (SPA fallback)
 ### 6.4 Tests, typecheck and build
 
 ```powershell
-python -m pytest -q -k "not live"   # 219 passed (18 live tests deselected)
-python -m pytest --collect-only -q  # 237 tests collected
+python -m pytest -q -k "not live"   # 232 passed (18 live tests deselected)
+python -m pytest --collect-only -q  # 250 tests collected
 
 cd frontend
 npm test         # vitest: 7 tests (2 files)
@@ -330,7 +330,7 @@ npx tsc --noEmit        # typecheck
 npm run build           # production build (dist/ must exist)
 cd ..
 pip install -r requirements-dev.txt
-python -m pytest -v     # full suite: 237 tests (see table below)
+python -m pytest -v     # full suite: 250 tests (see table below)
 ```
 
 Run the suite any time from the repo root (SPA tests auto-skip if
@@ -341,15 +341,16 @@ python -m pytest -v
 ```
 
 Counts, offline on this machine: `python -m pytest -q -k "not live"` →
-**219 passed** of 237 collected (18 tests whose names contain "live" are
-deselected without `.env` keys), and `cd frontend && npm test` → **7 tests**
-in 2 files. In CI (no secrets available) the same suite reports **225 passed
-+ 12 skipped** — the provider-key tests skip by marker instead of deselecting
-by name, so both totals are 237.
+**232 passed** of 250 collected (the `-k` filter deselects the 18 tests
+whose names contain "live"), and `cd frontend && npm test` → **7 tests**
+in 2 files. CI runs the full suite with `python -m pytest -v`
+(`.github/workflows/ci.yml` configures no secrets), where the provider-key
+tests skip by marker instead of being deselected by name.
 
-Beyond pytest, a scripted probe exercises a **running deployment** over its
-public WebSocket (greeting + 4-key summary) — this re-verifies a deployed
-URL and was used against the Vercel URL after the deploy
+Beyond pytest, a scripted probe can exercise a **running deployment** over
+its public WebSocket (greeting + 4-key summary) — `ws_smoke` is documented
+here as a deploy check; the deployed URL itself was verified with the
+health endpoint and manual calls instead
 ([§12](#12-public-demo-link-deploy)):
 
 ```powershell
@@ -514,8 +515,9 @@ macOS/Linux equivalent: `curl http://localhost:7860/api/health`.
 ## 12. Public demo link (deploy)
 
 **Live URL:** `https://aria-auraskincare-daniel.vercel.app` — production
-deploy (Vercel, `bom1`); `/api/health`, `/api/ws-selftest` and the
-`ws_smoke` call probe were verified against it.
+deploy (Vercel, `bom1`); checked with the health endpoint and manual calls
+(order lookup, return denial, cancellation with confirmation, out-of-scope
+request, unknown order, End Call, goodbye).
 
 The production deployment is one Vercel project with **two services**, defined
 in `vercel.json` (Vercel Services) and sharing one domain, one set of
@@ -548,17 +550,17 @@ Deploy (manual, one time):
 3. Project → **Settings → Deployment Protection**: set Authentication to
    **None** so the production URL is publicly reachable (the setting applies
    to the whole shared domain).
-4. Deploy. Verify the deployment with the probes from
-   [§7](#7-testing--ci):
+4. Deploy. What this demo actually ran against the deployed URL: the
+   health endpoint plus manual calls (order lookup, return denial,
+   cancellation with confirmation, out-of-scope request, unknown order,
+   End Call, goodbye). The optional outbound and WebSocket probes below
+   are documented for future checks:
 
 ```bash
 curl https://aria-auraskincare-daniel.vercel.app/api/health         # {"status":"ok","service":"aria"}
 curl https://aria-auraskincare-daniel.vercel.app/api/ws-selftest    # outbound Deepgram/Sarvam/Groq reachability from the function
 python -m backend.scripts.ws_smoke wss://aria-auraskincare-daniel.vercel.app/ws/call
 ```
-
-then replay the §16 runbook against that `wss://` URL — the final
-pre-submit check (14/14 expected).
 
 **Known limitation:** on Vercel (Hobby plan) every function — and therefore
 every WebSocket call — is capped at **5 minutes**. Aria warns you ~30 s before
@@ -605,7 +607,8 @@ policy-true refusal as any other phrasing.
   polite no. Within the window a return is still refused once the product
   **was opened or used** (`OPENED_RETURN_RULE`, `condition_required` from the
   tool); damage stays on its own 48-hour path.
-* **Discounts:** the PDF defines no discount policy, so Aria states the
+* **Discounts:** the Datastraw assessment brief (not included in this repo)
+  defines no discount policy, so Aria states the
   derived rule as policy — no discounts, promo codes or price exceptions —
   and no prompt-level urge to "make an exception": `POLICY_TEXT["discounts"]`
   feeds the prompt, and `get_policy_info` answers the `discounts` topic
@@ -640,8 +643,8 @@ without keys), and manually as the human runbook below. The "Local run"
 column is the recorded outcome of the scripted local run (`build` +
 `uvicorn :8000`, live provider keys). The scenarios are replayed offline
 via the scripted harness and the unit tests; the deployed URL was verified
-manually for order lookup, return denial, cancellation, End Call and
-goodbye.
+manually for order lookup, return denial, cancellation with confirmation,
+out-of-scope request, unknown order, End Call and goodbye.
 
 | # | Customer says | Expected result | Local run (recorded) |
 |---|---|---|---|
@@ -692,34 +695,15 @@ phrasing).
 
 ## 18. Section 9 answers
 
-Draft answers to the assignment's Section 9 questions (first-person;
-follow-up questions welcome):
+My answers to the assignment's Section 9 questions (first-person; follow-up questions welcome):
 
-1. **Why this stack?** I wanted a pipeline where I control every stage, so
-   I built it as streaming Deepgram → Groq → Sarvam over WebSocket instead of
-   hiding it behind a framework — every millisecond is attributable, and
-   barge-in/endpointing become mine to tune. Sarvam gives native Indian
-   voices for the persona, and the order/return/COD rules live in plain
-   Python (`policy.py`) so the model can phrase decisions but never make
-   them.
-2. **Hardest part?** Getting order ids through speech-to-text intact —
-   Deepgram renders them as word numbers, `ORD1O1` and run-joins, so
-   `normalize.py` parses spoken numbers and a tool guard refuses non-ids
-   instead of returning a fake "not found". Runner-up: endpointing in a
-   browser stream, solved by the server feeding its own silence frames once
-   the client goes quiet.
-3. **One more week?** An evaluation harness that replays the 14 scenarios
-   against every commit, real VAD instead of silence heuristics, deeper
-   Hinglish tuning (code-mixed ids), and call analytics (containment rate,
-   per-tool latency, drop-off points).
-4. **1,000 calls/day?** Each session is independent state on one ASGI
-   process — small number, no problem; beyond that I'd run multiple workers
-   behind a proxy, add provider fallbacks (STT/TTS swap candidates are
-   already isolated behind interfaces), monitor latency and error rates per
-   stage, keep PII out of logs (transcript stays in-memory, summary only),
-   put a human-handoff queue behind the refusal paths, and connect the real
-   order API behind the same tool schemas with this suite as the regression
-   gate.
+1. **Why this stack?** I wanted to control every stage, so I built a streaming pipeline (Deepgram, then Groq with tool calling, then Sarvam) over one WebSocket instead of using a realtime speech-to-speech API. That costs more engineering but lets me see what each stage does, tune endpointing and barge-in, and keep policy out of the model. Returns, cancellation and COD are computed in `policy.py`; the model only phrases the verdict, so it can't be talked into a refund. Sarvam gives the Indian voice the brief asked for.
+
+2. **Hardest part?** Two things. Speech-to-text mangles short, coded input ("ORD 103" came back as `OID 103`, `MD one zero two` or `ORD103`), so I normalise spoken IDs, and the lookup tool refuses a non-ID instead of inventing a "not found". The hardest debugging problem was a hang at the end of a call: the Groq SDK silently slept 52 seconds on a rate limit, while the call and the End Call button were stuck. I found it in the Vercel logs and fixed it by disabling SDK retries, adding a model fallback with a circuit breaker, putting a hard timeout on the summary, and making End Call close locally.
+
+3. **One more week?** Turn detection first: enable Deepgram's UtteranceEnd so slow speech isn't split into several turns. Second, validate any product name Aria says against the tool result (one demo take named the wrong product). Third, replay the 14 scenarios against the live deployment after each deploy (today they run offline through a scripted harness), then call analytics and a real order database.
+
+4. **1,000 calls a day?** The first thing to break is LLM quota, not the server. From my logs a tool-using turn costs about 4-5k tokens, so a call is very roughly 10-20k tokens, and 1,000 calls is on the order of 10-20M tokens a day, against a 200k daily cap on the larger model I started with on the free tier. I'd move to a paid tier with a second provider for fallback. After that: a long-lived container service instead of serverless WebSockets, per-stage latency and error monitoring, redacting names and order IDs from logs (transcripts currently appear there for debugging), a retention policy, a human-handoff path, and the real order API behind the same tool schemas, with the test suite as the regression gate.
 
 ## 19. Known limitations
 
@@ -774,9 +758,8 @@ code; measured numbers live in [§20](#20-latency).
   `get_order()` ([§2.1](#21-data-layer)).
 * **Platform limits apply on the public URL.** Every Vercel WebSocket
   function is capped at 300 s (handled: warn at 270 s, graceful summary
-  close at 295 s) and a cold start can add seconds to the very first call;
-  local runs have no limit. *Next step:* none for the demo — a longer
-  `maxDuration`/paid plan only if long calls matter.
+  close at 295 s); local runs have no limit. *Next step:* none for the demo —
+  a longer `maxDuration`/paid plan only if long calls matter.
 * **Exactly-₹499 shipping stays ambiguous by design.** `shipping_for(499)`
   refuses to pick a side (the plan's wording admits both readings) and the
   agent says so plainly instead of guessing. *Why:* there is no rule to
@@ -784,11 +767,59 @@ code; measured numbers live in [§20](#20-latency).
   behaviour; a future spec should pin the boundary.
 * **No auth, rate limiting, telephony or persistent storage.** The URL is
   public (deployment protection off, for the evaluator) with no
-  per-visitor quota, transcripts live only in memory for the duration of
-  the call, there is no PSTN/SIP integration (browser mic only), and each
-  WebSocket is a one-shot session. *Why:* assignment scope. *Next step:*
+  per-visitor quota, transcripts are held in memory for the duration of the
+  call (though, as the logging limitation below notes, they do pass through
+  the server logs), there is no PSTN/SIP integration (browser mic only), and
+  each WebSocket is a one-shot session. *Why:* assignment scope. *Next step:*
   auth + quotas before real traffic, call-history storage, and a telephony
   gateway if phone support is ever needed.
+* **Cold starts can take seconds for the first greeting.** Production runs
+  on Vercel serverless functions (`vercel.json`: `fluid: true`,
+  `maxDuration: 300`), so after an idle period the first greeting can take
+  several seconds while the function warms; warm starts were much faster in
+  my manual calls ([§20](#20-latency)). *Why:* serverless instances spin
+  down when idle. *Next step:* keep-warm pings or a paid plan with
+  always-on instances if the first-call delay matters; meanwhile
+  [§17](#17-notes-for-evaluators) tells evaluators to reload once.
+* **Spoken product names come from the model, not a verified field.** Policy
+  verdicts (returns, cancellation, COD) are computed in code (`policy.py`),
+  but the product name Aria reads back is whatever the model says — in one
+  demo take she described the wrong product for the order instead of naming
+  it from the lookup result. *Why:* nothing compares the spoken name against
+  the order record. *Next step:* validate product names against the tool
+  result before speaking (same class of guard as `NO_ORDER_ID`).
+* **Replies can be wordier than ideal.** The prompt caps replies at 1–2
+  short sentences and forbids volunteering policy the customer didn't ask
+  for, but prompt rules are soft; the deterministic layer only covers the
+  closing offer — an offer that would land in the same reply as a question
+  is stripped before TTS (`_strip_closing_offer` / `_turn_question_asked` in
+  `session.py`), and at most one offer is spoken per customer request.
+  *Why:* verbosity is a model distribution, not a contract. *Next step:* a
+  hard per-turn output budget, alongside the existing prompt locks
+  (`test_prompt_verbatim`).
+* **Empty model replies are recovered, never replayed as silence.** A round
+  with no text and no tool calls retries the next model once (`llm.py`,
+  "empty round" log) and, if it is still empty, the session answers itself:
+  a canned farewell plus a quiet end after a clear sign-off, or the canned
+  trouble line otherwise (`_handle_empty_reply` in `session.py`) — and the
+  idle "still there?" nudge is suppressed while a turn is still producing.
+  *Why:* rate-limited or degenerate rounds can return nothing. *Next step:*
+  count these per model and alert if they persist.
+* **Transcripts currently appear in server logs.** Customer interims and
+  finals are logged with their text at INFO (`stt interim: … text=%r` and
+  `stt gate: accepted -> turn (final=%r)` in `session.py`), which makes
+  line-by-line debugging possible and also means spoken content lands in the
+  log stream. *Why:* debuggability was prioritised for the demo. *Next step:*
+  metadata-only logging (timing and confidence, no text), redaction of names
+  and order ids, and a written retention policy before real traffic.
+* **`GROQ_MODEL` differs between the code and the deployment.** The deployed
+  instance sets GROQ_MODEL=openai/gpt-oss-20b (visible in the Vercel runtime
+  logs, which show model=openai/gpt-oss-20b); the code default is
+  gpt-oss-120b (`backend/config.py`, mirrored in `.env.example`). The
+  free-tier ≈200,000 tokens/day cap on that model was hit during testing
+  (quota figures in [§20](#20-latency)). *Why:* env vars live in Vercel
+  Project Settings and local `.env`, outside git. *Next step:* pin the
+  deployed value in the deploy docs so the two never drift.
 
 **Issues found and fixed during testing** (each now has a regression test):
 
@@ -806,6 +837,17 @@ code; measured numbers live in [§20](#20-latency).
   transcript lines (test-locked), and the client-side fallback was rebuilt
   from tool facts (`fallbackSummary.test.ts` asserts the phrase never
   appears in any shape).
+* **Empty model reply left the customer with nothing** — a round that
+  returned no text and no tool calls used to end the turn silently, so the
+  idle nudge could be the next thing the customer heard; fixed in two
+  layers: `llm.py` retries the next model once and then returns normally,
+  and `_handle_empty_reply()` answers with a canned farewell + quiet end
+  (clear sign-off) or the canned trouble line otherwise
+  (`test_llm_failover`, `test_ws_session`).
+* **Idle nudge could fire during a running turn** — a stray silence-arm
+  racing a slow model round could speak "Are you still there?" while the
+  reply was still being produced; fixed with a turn-running guard in
+  `_silence_fire` (`test_ws_session`).
 
 ## 20. Latency
 
@@ -816,13 +858,18 @@ Nothing here is estimated.
 
 **What the call screen's chips mean** (`CallPanel`):
 
-* `first audio <n> ms` — for a reply, the time from the customer's final
-  transcription arriving (`_turn_started` in `_run_turn`) to the first PCM
-  audio chunk leaving the server (`_emit_audio`): LLM + tool lookup +
-  TTS-to-first-chunk, **excluding** endpointing and the browser's playback
-  buffer. For the greeting the window starts at the `start` frame, so it
-  also includes Deepgram connect and greeting synthesis (pre-warmed in the
-  T21 run).
+* `first audio <n> ms` — always the **latest** turn's number: the server
+  sends `stats` with its first PCM chunk (`_emit_audio` → `_send_stats`),
+  measuring from `_turn_started` to that chunk. For a **reply** turn
+  `_turn_started` is set when the customer's final transcript arrives
+  (`_run_turn`), so the window is LLM + tool lookup + TTS-to-first-chunk and
+  **excludes** endpointing and the browser's playback buffer. For the
+  **greeting** turn it starts at the `start` frame and therefore includes
+  Deepgram connect and greeting synthesis. In my manual calls, warm
+  first-greeting readings ranged from about 0.2 s to 2.4 s; the one
+  cold-start reading was about 9.9 s. This is **not an end-to-end reply
+  latency**: it does not include how long the customer spoke, endpointing,
+  network time, or playback.
 * `tool lookup <n> ms` — server-side order lookup + policy verdict for that
   turn (`tool_lookup_ms` in `stats`) — see [§2.1](#21-data-layer).
 
@@ -831,15 +878,15 @@ Nothing here is estimated.
 | Stage | Number | Basis |
 |---|---|---|
 | Endpointing (speech end → final STT) | **800 ms** configured (`stt.py`; was 300 ms) | configured |
-| … probe | speech-end → final p50 ≈ **1.45 s** (300 ms) vs ≈ **2.6 s** (800 ms) | synthetic paced-audio probe (3 runs per setting, generated speech, not live users) |
+| … probe | speech-end → final p50 ≈ **1.45 s** (300 ms) vs ≈ **2.6 s** (800 ms) | synthetic paced-audio probe (generated speech, 3 runs per setting, not live users) |
 | … repo note | **+~0.5 s** to finalization when moving 300 → 800; first-audio unchanged | recorded in `stt.py` |
 | Speech end → first audio (reply, aggregate) | **~2 s** | measured — hero stats card copy, recorded in `site.ts` (commit `102ceb4`: state measured latency instead of the unmet 1.5 s target) |
 | LLM turn including a tool call | **0.7–2 s** (tool loop) | measured earlier, recorded in [§2.1](#21-data-layer) |
 | TTS first frame | **0.4–0.6 s** | measured earlier, recorded in [§2.1](#21-data-layer) |
 | Tool lookup | p50 **0.01 ms** (n=2000; p95 0.02, max 0.17); chip shows ~**0.05 ms** | benchmark recorded in [§2.1](#21-data-layer); manual observation |
-| Greeting first audio | warm p50 **1869 ms** (pre-warm cut ~3500 → 1869 ms); cold Sarvam observed up to **~7.5 s** | measured — T21 latency run, recorded in commit `a61fbb0` and `test_live_voice.py` |
-| First-audio badge, manual readings | ~**0.22–0.27 s** warm vs ~**1.5–2.4 s** slower/cold across 8 calls on the deployed site | manual observations by Daniel |
-| Production p50 / p95 over real traffic | <!-- TODO(daniel): production p50/p95 from real traffic --> | not yet collected |
+| Greeting first audio | warm p50 **1869 ms** (pre-warm cut ~3500 → 1869 ms); cold Sarvam observed up to **~7.5 s** | separate automated live test — T21 latency run, recorded in commit `a61fbb0` and `test_live_voice.py` |
+| First-audio badge, first-greeting readings | warm ~**0.2–2.4 s**; the one cold-start ~**9.9 s** | manual observations by Daniel |
+| Production p50 / p95 over real traffic | not measured at scale | I have no production traffic data — real-user latency has not been measured at volume |
 
 **The one trade-off to know:** raising `endpointing` 300 → 800 ms made
 transcription reliable (fewer mid-sentence cut-offs; the 9 s nudge stopped
@@ -855,7 +902,6 @@ here as observations, not repository measurements):
 
 * `gpt-oss-120b`: ≈ **8,000 tokens/min**, ≈ **200,000 tokens/day**.
 * `gpt-oss-20b`: ≈ **8,000 tokens/min**.
-* Median **~1,850 input tokens per LLM request** (max ~2,280) —
-  corroborated in code (`llm.py` records the real median ~1,850 prompt
-  tokens per request); a short call typically needs **2–3 LLM requests per
-  customer turn**.
+* From my Groq usage export, the median input was about 1,850 tokens per
+  request (observed, not computed in the repo); a short call typically
+  needs **2–3 LLM requests per customer turn**.
