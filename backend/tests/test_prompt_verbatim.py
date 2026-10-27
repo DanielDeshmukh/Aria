@@ -100,13 +100,14 @@ def test_closing_offer_discipline() -> None:
     """Production bug: Aria appended "Is there anything else I can help you
     with?" to almost every reply — including right after her own question
     ("...cancel it for you? Is there anything else...?"). The offer is capped
-    at once per call, only after a fully resolved request, and never in the
-    same reply as a question to the customer; every other reply ends without
-    it (the idle nudge handles silence). The quoted wording must survive for
-    session._CLOSING_OFFER_RE (quiet-end window)."""
+    at once per RESOLVED REQUEST (relaxed from once per call: each new
+    customer message opens a new request), only after a fully resolved
+    request, and never in the same reply as a question to the customer; every
+    other reply ends without it (the idle nudge handles silence). The quoted
+    wording must survive for session._CLOSING_OFFER_RE (quiet-end window)."""
     for needle in (
         "Is there anything else I can help you with?",  # quiet-end detector phrase
-        "AT MOST ONCE",                                 # rule 2: once per call
+        "AT MOST ONCE per resolved request",           # rule 2: per resolved request
         "fully resolves the customer's request",        # rule 2: only after resolution
         "never append it to every reply",               # rule 2: not on every reply
         "NEVER put the closing offer in the same reply as a question to the customer",
@@ -117,4 +118,21 @@ def test_closing_offer_discipline() -> None:
     # the old always-append instruction is gone, and the offer is quoted once
     assert "close with one offer" not in SYSTEM_PROMPT
     assert "After you have answered" not in SYSTEM_PROMPT
+    # the once-per-call cap was relaxed to per resolved request
+    assert "AT MOST ONCE in the whole call" not in SYSTEM_PROMPT
     assert SYSTEM_PROMPT.count("Is there anything else I can help you with?") == 1
+
+
+def test_brevity_no_volunteering_and_goodbye_wrap_up() -> None:
+    """Log findings: chatty replies. Answer only what was asked — never
+    volunteer shipping fees or eligibility — the cancel-eligible confirmation
+    is one short question without restating the policy, and a customer
+    goodbye is wrapped up with a one-line farewell + end_call()."""
+    for needle in (
+        "1-2 short sentences",                          # max two short sentences
+        "Answer only what the customer asked",
+        "never volunteer shipping fees",
+        "the confirmation is ONE short question",       # cancel-eligible, no restating
+        "one short goodbye line, then call end_call()", # goodbye -> end_call
+    ):
+        assert needle in SYSTEM_PROMPT, f"missing brevity rule: {needle!r}"

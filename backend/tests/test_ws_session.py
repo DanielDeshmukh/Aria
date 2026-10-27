@@ -14,7 +14,7 @@ import time
 import pytest
 
 import backend.session as session_mod
-from backend.session import GREETING, REPEAT, STILL_THERE, CallSession
+from backend.session import GOODBYE, GREETING, LLM_TROUBLE, REPEAT, STILL_THERE, CallSession
 from backend.summary import SUMMARY_KEYS
 from backend.tests._fakes import EventBox, FakeLLM, FakeSTT, FakeTTS, wait_until
 
@@ -275,7 +275,7 @@ def test_end_sends_summary_then_ended() -> None:
     asyncio.run(scenario())
 
 
-def test_interims_throttled_and_empty_reply_falls_back_to_listening() -> None:
+def test_interims_throttled_and_empty_reply_speaks_canned_clarification() -> None:
     async def scenario() -> None:
         session, box, stt, llm, tts = make()
         await to_listening(session, box, stt, llm, tts)
@@ -287,11 +287,20 @@ def test_interims_throttled_and_empty_reply_falls_back_to_listening() -> None:
         assert all(m["role"] == "customer" for m in interims)
         assert [m for m in session.transcript if m["role"] == "customer"] == []
         await stt.emit_final("hello there")
+        await wait_until(lambda: llm.chat_calls == 1, what="empty turn ran")
+        # An empty model reply must be ANSWERED (finding 1): the canned
+        # clarification goes out at once - never a silent fall-back to
+        # listening where the idle nudge would speak next.
         await wait_until(
-            lambda: llm.chat_calls == 1 and box.states()[-1] == "listening",
-            what="empty reply -> listening",
+            lambda: len(box.of("audio")) >= 2, what="canned clarification audio"
         )
-        assert len(box.of("audio")) == 1  # greeting only
+        assert LLM_TROUBLE in [
+            m.get("text") for m in box.of("transcript")
+        ], box.dump()
+        await session.handle({"type": "playback_done"})
+        await wait_until(
+            lambda: box.states()[-1] == "listening", what="listening again"
+        )
 
     asyncio.run(scenario())
 
@@ -769,6 +778,216 @@ def test_closing_flag_clears_on_new_customer_final() -> None:
             lambda: session._closing_offer is False and llm.chat_calls == 2,
             what="closing flag cleared and the second turn ran",
         )
+
+    asyncio.run(scenario())
+
+
+# ------------------------------------------- chatty-reply strip (block 1 B)
+def _agent_texts(box) -> list[str]:
+    return [m["text"] for m in box.of("transcript") if m["role"] == "agent"]
+
+
+def test_closing_offer_stripped_when_the_reply_already_asks() -> None:
+    """The model asks its question AND appends the closing offer in one
+    reply: the offer is stripped before TTS, the question is spoken, and the
+    quiet-end window is never opened."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                rounds=[
+                    (
+                        "text",
+                        "Would you like me to cancel ORD-103? "
+                        "Is there anything else I can help you with?",
+                    )
+                ]
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("cancel my order 103 please")
+        await wait_until(
+            lambda: session._turn_task is not None and session._turn_task.done(),
+            what="turn finished",
+        )
+        agents = _agent_texts(box)
+        assert any("cancel ORD-103?" in t for t in agents), agents
+        assert not any("anything else" in t for t in agents), agents
+        assert session._closing_offer is False
+
+    asyncio.run(scenario())
+
+
+def test_only_one_closing_offer_per_customer_request() -> None:
+    """Two offers in the same reply: the first is spoken (quiet window opens),
+    the second is stripped before TTS."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                rounds=[
+                    ("text", "Your order ships today."),
+                    ("text", "Is there anything else I can help you with?"),
+                    ("text", "Anything else I can help you with?"),
+                ]
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("where is my order ORD-101")
+        await wait_until(
+            lambda: session._turn_task is not None and session._turn_task.done(),
+            what="turn finished",
+        )
+        offers = [t for t in _agent_texts(box) if "anything else" in t.lower()]
+        assert len(offers) == 1, offers
+        assert session._closing_offer is True
+
+    asyncio.run(scenario())
+
+
+# --------------------------------- empty model replies (finding 1 / block C)
+def test_empty_reply_to_an_open_question_speaks_the_canned_clarification() -> None:
+    """Nothing from the model, nothing to sign off for: the canned
+    clarification is spoken at once, the session stays alive, and the idle
+    nudge never answers the empty turn."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(FakeLLM())  # no rounds -> empty
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("where is my order")
+        await wait_until(
+            lambda: len(box.of("audio")) >= 2, what="canned clarification audio"
+        )
+        agents = _agent_texts(box)
+        assert LLM_TROUBLE in agents, agents
+        assert GOODBYE not in agents
+        assert box.of("error") == []
+        assert box.states()[-1] != "ended"
+        assert llm.chat_calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_empty_reply_after_sign_off_speaks_farewell_and_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clear goodbye after a finished (non-question) answer + an empty model
+    reply: the canned one-line farewell goes out and the call ends quietly
+    with summary + ended."""
+    monkeypatch.setattr(session_mod, "FAREWELL_END_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                advance=True,
+                rounds=[
+                    ("text", "Your order ORD-101 is out for delivery by 6 PM today.")
+                ],
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("where is my order")
+        await wait_until(
+            lambda: session._turn_task is not None and session._turn_task.done(),
+            what="answer turn finished",
+        )
+        await session.handle({"type": "playback_done"})
+        await stt.emit_final("that's all, thanks")
+        await wait_until(lambda: box.of("summary"), timeout=3.0, what="quiet end")
+        assert box.states()[-1] == "ended"
+        assert GOODBYE in " ".join(_agent_texts(box)), _agent_texts(box)
+        assert LLM_TROUBLE not in _agent_texts(box)
+        assert len(box.of("summary")) == 1
+        assert llm.chat_calls == 2
+
+    asyncio.run(scenario())
+
+
+def test_empty_reply_after_the_closing_offer_ends_quietly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard passes via the closing offer: "no thanks" after Aria's own offer
+    is a sign-off - canned farewell + quiet end, even though the offer line
+    itself ends with a question mark."""
+    monkeypatch.setattr(session_mod, "FAREWELL_END_SECONDS", 0.05)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                advance=True,
+                rounds=[("text", "Is there anything else I can help you with?")],
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("thanks that is everything")
+        await wait_until(
+            lambda: session._turn_task is not None and session._turn_task.done(),
+            what="closing-offer turn finished",
+        )
+        assert session._closing_offer is True
+        await session.handle({"type": "playback_done"})
+        await stt.emit_final("no thanks")
+        await wait_until(lambda: box.of("summary"), timeout=3.0, what="quiet end")
+        assert box.states()[-1] == "ended"
+        assert GOODBYE in " ".join(_agent_texts(box)), _agent_texts(box)
+        assert llm.chat_calls == 2
+
+    asyncio.run(scenario())
+
+
+def test_empty_reply_to_a_pending_question_never_ends_the_call() -> None:
+    """Guard blocks the end: "no thanks" while Aria waits for a confirmation
+    is an ANSWER, not a sign-off - the canned clarification goes out and the
+    call stays up."""
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(
+            FakeLLM(
+                advance=True,
+                rounds=[
+                    ("text", "ORD-103 is Processing - would you like me to cancel it?")
+                ],
+            )
+        )
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("cancel my order 103")
+        await wait_until(
+            lambda: session._turn_task is not None and session._turn_task.done(),
+            what="question turn finished",
+        )
+        await session.handle({"type": "playback_done"})
+        await stt.emit_final("no thanks")
+        await wait_until(
+            lambda: any(m.get("text") == LLM_TROUBLE for m in box.of("transcript")),
+            what="canned clarification instead of an end",
+        )
+        assert box.of("summary") == []
+        assert box.states()[-1] != "ended"
+        assert llm.chat_calls == 2
+
+    asyncio.run(scenario())
+
+
+def test_nudge_never_interrupts_a_running_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hard guard in _silence_fire: an idle countdown that elapses while a
+    turn is still producing is suppressed - the turn's own end re-arms it."""
+    monkeypatch.setattr(session_mod, "SILENCE_SECONDS", 0.1)
+
+    async def scenario() -> None:
+        session, box, stt, llm, tts = make(FakeLLM(rounds=[("hang",)]))
+        await to_listening(session, box, stt, llm, tts)
+        await stt.emit_final("where is my order")
+        await wait_until(lambda: box.states()[-1] == "thinking", what="turn running")
+        session._arm_silence()  # stray arm while the turn produces
+        await asyncio.sleep(0.35)  # > SILENCE 0.1
+        assert not any(
+            m.get("text") == STILL_THERE for m in box.of("transcript")
+        ), "the nudge fired while a turn was still producing"
+        assert llm.cancelled is False
+        await session.handle({"type": "end"})
+        assert box.of("error") == []
 
     asyncio.run(scenario())
 

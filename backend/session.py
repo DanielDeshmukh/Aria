@@ -33,6 +33,10 @@ STILL_THERE = "Are you still there? I'm happy to help if you need anything."
 LLM_TROUBLE = (
     "Sorry, I'm having a little trouble, could you say that again in a moment?"
 )
+# Canned one-line farewell: the customer clearly signed off but the model
+# returned an empty reply (see _handle_empty_reply) - the call then ends
+# quietly with summary + ended instead of an idle nudge.
+GOODBYE = "Thank you for calling Aura Skincare. Have a great day!"
 SILENCE_SECONDS = 9.0
 # After Aria's own closing offer ("anything else I can help with?") the
 # customer gets a longer, polite window - and when it expires the call ends
@@ -57,6 +61,43 @@ _CLOSING_OFFER_RE = re.compile(
     r"\banything else\b|\belse can i help\b|\belse i can help\b|\belse you need\b"
     r"|\belse i can do\b|\bfurther questions\b",
     re.I,
+)
+
+
+def _question_before_offer(text: str) -> bool:
+    """True when the SAME chunk asks the customer something ahead of the
+    closing offer. The splitter normally delivers those as separate sentences
+    (_turn_question_asked then covers it) - this is the one-piece path."""
+    match = _CLOSING_OFFER_RE.search(text)
+    return bool(match) and "?" in text[: match.start()]
+
+
+def _strip_closing_offer(text: str) -> str:
+    """Drop every sentence carrying the closing offer, keep the rest of the
+    reply. Returns "" when the offer was all there was."""
+    sentences, rest = split_sentences(text)
+    kept = [s for s in sentences if not _CLOSING_OFFER_RE.search(s)]
+    if rest.strip() and not _CLOSING_OFFER_RE.search(rest):
+        kept.append(rest.strip())
+    return " ".join(kept).strip()
+
+
+# Customer sign-off phrases (commas stripped before matching): on an EMPTY
+# model reply these end the call with the canned GOODBYE line - but only when
+# Aria's previous line was the closing offer or a finished answer, never as
+# the answer to a pending question (see _handle_empty_reply).
+_DONE_BYE = frozenset(
+    {
+        "nothing", "nothing else", "nothing else thanks", "nothing really",
+        "that's all", "that is all", "that's all thanks", "that is all thanks",
+        "that's it", "that is it", "that's everything", "that is everything",
+        "that was everything", "no", "nope", "no thanks", "no thank you",
+        "thanks", "thank you", "thanks a lot", "thanks so much",
+        "thanks again", "thank you very much",
+        "bye", "bye bye", "goodbye", "good bye", "bye for now",
+        "i'm good", "i am good", "i'm done", "i am done",
+        "no more questions", "i have no more questions",
+    }
 )
 LOW_CONFIDENCE = 0.55
 INTERIM_MIN_INTERVAL = 0.2
@@ -182,6 +223,10 @@ class CallSession:
         self._hold_task: asyncio.Task | None = None
         self._still_there_sent = False
         self._closing_offer = False
+        # A question (or the closing offer) spoken in the CURRENT model reply:
+        # reset at _run_turn, so a second closing offer inside the same
+        # customer request is stripped before TTS (see _speak).
+        self._turn_question_asked = False
         self._last_playback_done_at = 0.0
         self._warn_handle: asyncio.TimerHandle | None = None
         self._end_handle: asyncio.TimerHandle | None = None
@@ -636,8 +681,12 @@ class CallSession:
         self._turn_started = time.monotonic()
         self._stats_sent = False
         self._tool_lookup_ms = None
+        # per-request strip guard: one closing offer (and no offer after a
+        # question) per customer message - see _speak
+        self._turn_question_asked = False
         await self._set_state("thinking")
         buffer = ""
+        saw_text = False
         try:
             async for event in self.llm.chat(
                 self.messages, tools_mod.TOOL_SCHEMAS, self._execute_tool
@@ -645,7 +694,9 @@ class CallSession:
                 if self._ended:
                     break  # a provider failed mid-turn; session already errored
                 if event.get("type") == "text":
-                    buffer = await self._flush(buffer + str(event.get("delta", "")))
+                    delta = str(event.get("delta", ""))
+                    saw_text = saw_text or bool(delta.strip())
+                    buffer = await self._flush(buffer + delta)
                 elif event.get("type") == "tool":
                     await self.send(
                         {
@@ -674,6 +725,11 @@ class CallSession:
             logger.exception("llm turn failed - speaking the graceful line")
             await self._canned_speak(LLM_TROUBLE)
             return
+        if not self._ended and not saw_text:
+            # The model chain answered with nothing at all (llm.py already
+            # retried the next model once): silence is never the reply - the
+            # idle nudge must not be what the customer hears next.
+            await self._handle_empty_reply()
         if self.state == "thinking":
             # no audio was produced at all - nothing to wait for
             await self._set_state("listening")
@@ -696,6 +752,57 @@ class CallSession:
             # fully sent: end quietly FAREWELL_END_SECONDS from now - the
             # deadline must not depend on playback_done or the idle timers.
             self._arm_farewell_end(FAREWELL_END_SECONDS)
+
+    async def _handle_empty_reply(self) -> None:
+        """The model produced no text and no tool calls (llm.py already gave
+        the next model one shot). The customer must still hear something, and
+        the idle nudge is never the answer to an empty turn: a clear sign-off
+        after a closing offer or a finished answer gets the canned farewell
+        plus a quiet end, everything else gets the canned clarification.
+        Every case is logged."""
+        customer = ""
+        previous = ""
+        for msg in reversed(self.transcript):
+            role = msg.get("role")
+            if not customer and role == "customer":
+                customer = str(msg.get("text") or "")
+            if not previous and role == "agent":
+                previous = str(msg.get("text") or "")
+            if customer and previous:
+                break
+        sign_off = bool(customer) and self._is_done_or_goodbye(customer)
+        # Only a closing offer or a NON-question previous line may end the
+        # call: "no thanks" after "shall I cancel?" is an answer, not a
+        # goodbye - that case gets the clarification instead.
+        may_end = bool(_CLOSING_OFFER_RE.search(previous)) or not (
+            previous.rstrip().endswith("?")
+        )
+        if sign_off and may_end:
+            logger.info(
+                "empty model reply to customer sign-off %r - canned farewell "
+                "and quiet end (previous agent line: %r)",
+                customer,
+                previous,
+            )
+            self._request_end_call()
+            await self._canned_speak(GOODBYE)
+            return
+        logger.warning(
+            "empty model reply - canned clarification (customer=%r "
+            "sign_off=%s previous=%r)",
+            customer,
+            sign_off,
+            previous,
+        )
+        await self._canned_speak(LLM_TROUBLE)
+
+    @staticmethod
+    def _is_done_or_goodbye(text: str) -> bool:
+        """True for the customer's sign-off phrases (punctuation, commas and
+        case ignored) - see _DONE_BYE."""
+        cleaned = text.strip(" .!?").replace(",", "")
+        cleaned = re.sub(r"\s+", " ", cleaned).lower()
+        return cleaned in _DONE_BYE
 
     def _execute_tool(self, name: str, args: dict) -> dict:
         """dispatch() plus capture of the lookup timing for the stats event
@@ -776,18 +883,39 @@ class CallSession:
         if self._closing or self._ended:
             return
         if _CLOSING_OFFER_RE.search(text):
-            # Aria just offered to close: the customer then gets a longer,
-            # polite window - and no "still there?" when it expires.
-            self._closing_offer = True
-            logger.info(
-                "closing offer detected - idle window is now %.0fs",
-                CLOSING_IDLE_SECONDS,
-            )
+            if self._turn_question_asked or _question_before_offer(text):
+                # Deterministic backstop for the chatty-reply bug: the offer
+                # never rides along with a question, and at most one offer is
+                # spoken per customer request (_turn_question_asked resets at
+                # _run_turn). Strip it before TTS - and never open the quiet
+                # window for an offer that was not spoken.
+                stripped = _strip_closing_offer(text)
+                logger.info(
+                    "closing offer stripped before TTS (a question was "
+                    "already asked in this reply) - %r -> %r",
+                    text,
+                    stripped,
+                )
+                if not stripped:
+                    return
+                text = stripped
+            else:
+                # Aria just offered to close: the customer then gets a longer,
+                # polite window - and no "still there?" when it expires. The
+                # flag also blocks a second offer within this request.
+                self._closing_offer = True
+                self._turn_question_asked = True
+                logger.info(
+                    "closing offer detected - idle window is now %.0fs",
+                    CLOSING_IDLE_SECONDS,
+                )
         if text.rstrip().endswith("?"):
             # remembered for the low-confidence yes/no gate (issue 3): a short
             # "yes"/"no" after a confirmation question is accepted below
-            # LOW_CONFIDENCE
+            # LOW_CONFIDENCE. It also closes the door on a closing offer later
+            # in this same reply (the strip guard in this method).
             self._last_agent_question = text
+            self._turn_question_asked = True
         self.transcript.append({"role": "agent", "text": text})
         await self.send(
             {"type": "transcript", "role": "agent", "text": text, "final": True}
@@ -914,6 +1042,14 @@ class CallSession:
         except asyncio.CancelledError:
             return
         if self._closing or self._ended or self._still_there_sent:
+            return
+        if self._turn_task is not None and not self._turn_task.done():
+            # The nudge must never interrupt a running turn (a stray arm from
+            # a race): the turn's own end re-arms the countdown.
+            logger.info(
+                "idle window elapsed while a turn is still producing - "
+                "nudge suppressed"
+            )
             return
         if time.monotonic() - self._last_user_speech_at < SPEECH_FRESH_SECONDS:
             # the customer spoke too recently for this deadline (mid-sentence

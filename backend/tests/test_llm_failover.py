@@ -124,6 +124,59 @@ def test_non_429_api_error_switches_without_retry(
     assert events[-1]["type"] == "llm_stats"
 
 
+# ------------------------------------------------- empty rounds (finding 1)
+def empty_step() -> list[dict]:
+    """A round with no text and no tool calls - the production empty reply."""
+    return [{"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+
+
+def test_empty_round_retries_the_next_model_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm(monkeypatch, [empty_step(), text_step("It shipped.")])
+    events = asyncio.run(collect(llm))
+    assert calls == ["model-a", "model-b"]  # one empty round, then the fallback
+    deltas = "".join(e["delta"] for e in events if e["type"] == "text")
+    assert deltas == "It shipped."
+    assert events[-1]["type"] == "llm_stats"
+    assert events[-1]["model"] == "model-b"
+
+
+def test_empty_round_returns_to_the_session_after_one_retry(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Two empties: the retry is spent on model-b, then the turn RETURNS
+    # (no LLMUnavailableError) so the session can speak a canned line.
+    llm, calls = make_llm(monkeypatch, [empty_step(), empty_step()])
+    with caplog.at_level(logging.WARNING, logger="backend.llm"):
+        events = asyncio.run(collect(llm))
+    assert calls == ["model-a", "model-b"]  # exactly one retry, on the next model
+    assert [e["type"] for e in events] == ["llm_stats"]  # no text delta at all
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum("empty round" in m for m in messages) == 2, messages
+
+
+def test_empty_round_on_a_single_model_chain_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm, calls = make_llm(monkeypatch, [empty_step()], chain=("model-a",))
+    events = asyncio.run(collect(llm))
+    assert calls == ["model-a"]  # nowhere to retry - straight back to the session
+    assert events[-1]["type"] == "llm_stats"
+
+
+def test_whitespace_only_round_counts_as_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # deltas that carry only whitespace are not a reply the customer can hear
+    llm, calls = make_llm(monkeypatch, [text_step("   ")], chain=("model-a",))
+    events = asyncio.run(collect(llm))
+    assert calls == ["model-a"]
+    deltas = "".join(e["delta"] for e in events if e["type"] == "text")
+    assert deltas.strip() == ""
+    assert events[-1]["type"] == "llm_stats"
+
+
 def test_llm_stats_event_reports_model_and_positive_tokens(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

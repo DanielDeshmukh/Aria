@@ -297,7 +297,11 @@ class GroqLLM:
         Failure handling: 429 -> one backoff retry on the same model AND a
         60 s circuit-breaker cooldown for it (later turns skip straight to
         the fallback); a persistent 429 or any other API error -> next model
-        in the chain; chain exhausted -> LLMUnavailableError.
+        in the chain; chain exhausted -> LLMUnavailableError. A round that
+        comes back EMPTY (no text and no tool calls) gets one retry on the
+        next model; when that too is empty the turn returns normally with
+        stats and no text, so the session can answer the customer itself -
+        silence is never a reply.
         """
         prompt_chars = 0
         completion_chars = 0
@@ -306,7 +310,21 @@ class GroqLLM:
         has_usage = False
         breakdown: dict = {}
         last_error: Exception | None = None
-        for model in self._usable_models():
+        models = self._usable_models()
+        empty_retried = False
+
+        def stats_event(model: str) -> dict:
+            # real API tokens when the usage chunk arrived,
+            # chars/4 estimate otherwise (labelled in the log)
+            return {
+                "type": "llm_stats",
+                "model": model,
+                "approx_tokens": (usage_prompt + usage_completion)
+                if has_usage
+                else approx_tokens(prompt_chars) + approx_tokens(completion_chars),
+            }
+
+        for index, model in enumerate(models):
             retried_429 = False
             while True:
                 acc = RoundAccumulator()
@@ -372,22 +390,31 @@ class GroqLLM:
                     json.dumps(calls, ensure_ascii=False)
                 )
                 if not calls:
-                    if text:
+                    if text.strip():
                         messages.append({"role": "assistant", "content": text})
+                    else:
+                        # Empty round: no text AND no tool calls. Give the
+                        # NEXT model in the chain one shot; with no model left
+                        # the turn returns normally so the session can answer
+                        # the customer itself (a canned line, never silence).
+                        if not empty_retried and index + 1 < len(models):
+                            empty_retried = True
+                            logger.warning(
+                                "groq empty round on %s (no text, no tool "
+                                "calls) - retrying on the next model",
+                                model,
+                            )
+                            break
+                        logger.warning(
+                            "groq empty round on %s (no text, no tool calls) - "
+                            "no model left to retry, returning to the session",
+                            model,
+                        )
                     usage = (usage_prompt, usage_completion) if has_usage else None
                     self._report_turn(
                         model, prompt_chars, completion_chars, breakdown, usage
                     )
-                    yield {
-                        "type": "llm_stats",
-                        "model": model,
-                        # real API tokens when the usage chunk arrived,
-                        # chars/4 estimate otherwise (labelled in the log)
-                        "approx_tokens": (usage_prompt + usage_completion)
-                        if has_usage
-                        else approx_tokens(prompt_chars)
-                        + approx_tokens(completion_chars),
-                    }
+                    yield stats_event(model)
                     return
                 messages.append(
                     {
